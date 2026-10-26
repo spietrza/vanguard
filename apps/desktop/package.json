@@ -44,7 +44,7 @@
     "tailwindcss": "^4",
     "tailwindcss-debug-screens": "^3.0.1",
     "typescript": "~7.0.2",
-    "vite": "^7",
+    "vite": "^8",
     "vitest": "^4"
   }
 }
