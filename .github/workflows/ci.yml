@@ -19,6 +19,8 @@ jobs:
       # apps/desktop is its own pnpm project (own lockfile + workspace), so it installs separately.
       - run: pnpm --dir apps/desktop install --frozen-lockfile
       - run: pnpm test:desktop
+      # tsc + vite build: catches type breaks the vitest run alone misses (e.g. matcher types after a vitest major).
+      - run: pnpm --dir apps/desktop build
       # SBOM over the installed dependency tree (node_modules present after install), SPDX JSON,
       # uploaded as a build artifact for provenance/audit.
       - name: Generate SBOM (SPDX)
