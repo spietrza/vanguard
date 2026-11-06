@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { githubAdapter } from './github.js';
+import { describe, it, expect, vi } from 'vitest';
+import { githubAdapter, sameRepoTasks } from './github.js';
 import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { RunGithubIssueDeps } from './github.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -56,5 +56,21 @@ describe('githubAdapter', () => {
     const adapter = githubAdapter(makeDeps(), gh);
 
     await expect(adapter.signalSecretBlock('owner/repo#7', task, { reason: 'scan-error', message: 'x' })).resolves.toBeUndefined();
+  });
+});
+
+describe('sameRepoTasks', () => {
+  const task = (id: string): Task => ({ id, title: '', description: '', labels: [], children: [], comments: [] });
+
+  it('keeps items of the configured repo (case-insensitive) and skips foreign ones with a warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const kept = sameRepoTasks([task('owner/repo#1'), task('other-org/other-repo#7'), task('Owner/Repo#2')], 'owner/repo');
+      expect(kept.map((t) => t.id)).toEqual(['owner/repo#1', 'Owner/Repo#2']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('other-org/other-repo#7');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
