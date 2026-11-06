@@ -892,7 +892,14 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
       for (const item of parsed.items) {
         const content = item.content;
         if (content === undefined || content.type !== 'Issue' || content.number === undefined) continue;
-        const issueRef = `${content.repository ?? repo}#${content.number}`;
+        const itemRepo = content.repository ?? repo;
+        // The run path (runGithubIssue) is pinned to the watched repo: a foreign item would run
+        // <repo>#<number>, an issue nobody selected. Skip it and say so.
+        if (itemRepo.toLowerCase() !== repo.toLowerCase()) {
+          if (item.status === opts.triggerStatus) console.warn(`vanguard: project item ${itemRepo}#${content.number} belongs to another repository than ${repo}; skipped`);
+          continue;
+        }
+        const issueRef = `${itemRepo}#${content.number}`;
         itemNodeIds.set(issueRef, item.id);
         if (item.status !== opts.triggerStatus) continue;
         if (opts.label !== undefined && !(content.labels ?? []).includes(opts.label)) continue;

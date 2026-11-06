@@ -35,10 +35,43 @@ export function encodeProject(project: string): string {
   return project.replace(/\//g, '%2F');
 }
 
-function toGitLabTask(project: string, issue: GitLabIssue, notes: GitLabNote[] = []): Task {
+// The glab user is constant for the process, and watch loops read it on every poll. A failed
+// lookup is dropped from the cache so the next call retries it.
+const glabUsers = new WeakMap<GlabRunner, Promise<string>>();
+
+/** The username glab is authenticated as (GET /user), cached per runner. Throws when it cannot be read. */
+export function glabUser(glab: GlabRunner): Promise<string> {
+  const cached = glabUsers.get(glab);
+  if (cached !== undefined) return cached;
+  const user = glab(['api', 'user'])
+    .then((out) => {
+      const name = (JSON.parse(out) as { username?: string }).username;
+      if (name === undefined || name === '') throw new Error('it returned no username');
+      return name;
+    })
+    .catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`cannot read the glab user; the token must be able to read GET /user (${detail})`, { cause: error });
+    });
+  glabUsers.set(glab, user);
+  user.catch(() => glabUsers.delete(glab));
+  return user;
+}
+
+/**
+ * GitLab notes carry no association. A note by the user glab runs as (Vanguard's own spec, research
+ * and manifest notes) is stamped MEMBER, so it stays trusted when --feedback-authors makes every other
+ * association-less note fail closed. Everyone else keeps an absent association (see classifyAuthor).
+ */
+function toGitLabTask(project: string, issue: GitLabIssue, notes: GitLabNote[] = [], self?: string): Task {
+  const selfLower = self?.toLowerCase();
   const comments: TaskComment[] = notes
     .filter((n) => !n.system)
-    .map((n) => ({ author: n.author.username, body: n.body }));
+    .map((n) => ({
+      author: n.author.username,
+      body: n.body,
+      ...(selfLower !== undefined && n.author.username.toLowerCase() === selfLower ? { authorAssociation: 'MEMBER' } : {}),
+    }));
   return {
     id: `${project}#${issue.iid}`,
     title: issue.title,
@@ -66,7 +99,18 @@ export class GitLabTaskFetcher implements TaskFetcher {
     // notes fetched separately — glab issue view does not include them
     const notesOut = await this.glab(['api', `projects/${encodeProject(this.project)}/issues/${iid}/notes?per_page=100`]);
     const notes = JSON.parse(notesOut) as GitLabNote[];
-    return toGitLabTask(this.project, issue, notes);
+    return toGitLabTask(this.project, issue, notes, await this.self(notes));
+  }
+
+  /** The glab user, looked up only when there are notes to attribute. A failed lookup leaves every note unstamped (fails closed under an allowlist). */
+  private async self(notes: GitLabNote[]): Promise<string | undefined> {
+    if (!notes.some((n) => !n.system)) return undefined;
+    try {
+      return await glabUser(this.glab);
+    } catch (error) {
+      console.warn(`vanguard: ${error instanceof Error ? error.message : String(error)}; Vanguard's own notes on ${this.project} are not recognised`);
+      return undefined;
+    }
   }
 
   async list(filter?: TaskFilter): Promise<Task[]> {

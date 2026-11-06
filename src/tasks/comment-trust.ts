@@ -17,11 +17,12 @@ export type AuthorTrust = 'association' | 'allowed' | 'issue-author' | 'bot' | '
 /**
  * Bot recognition for *granting* trust: exact logins only. An outsider can pick a username such as
  * `mallory-vanguard`, so the substring match of isBotLogin must never make a comment authoritative.
+ * No bare `vanguard`: that GitHub login is unclaimed, so anyone could register it. Vanguard comments as
+ * `github-actions` in CI and as the token's user locally; a dedicated bot account goes in botLogins.
  */
 function isTrustedBotLogin(login: string, extraBotLogins?: readonly string[]): boolean {
   const lower = login.toLowerCase();
   return (
-    lower === 'vanguard' ||
     lower.endsWith('[bot]') ||
     lower === 'github-actions' ||
     (extraBotLogins ?? []).some((b) => lower === b.toLowerCase())
@@ -37,19 +38,31 @@ export function isBotLogin(login: string, extraBotLogins?: readonly string[]): b
   return login.toLowerCase().includes('vanguard') || isTrustedBotLogin(login, extraBotLogins);
 }
 
-/** Bot check first (so Vanguard's own comments classify as 'bot', never 'association'). */
+/**
+ * Bot check first (so Vanguard's own comments classify as 'bot', never 'association'). The built-in
+ * names are GitHub logins: on a provider with no association model (GitLab) anyone can register
+ * `vanguard` or `github-actions`, so there only the operator's explicit botLogins count.
+ */
 export function classifyAuthor(author: string, association: string | undefined, opts: TrustOptions = {}): AuthorTrust {
-  if (isTrustedBotLogin(author, opts.botLogins)) return 'bot';
+  const isBot =
+    association === undefined
+      ? (opts.botLogins ?? []).some((b) => b.toLowerCase() === author.toLowerCase())
+      : isTrustedBotLogin(author, opts.botLogins);
+  if (isBot) return 'bot';
   const lowerAuthor = author.toLowerCase();
   if ((opts.allowedAuthors ?? []).some((a) => a.toLowerCase() === lowerAuthor)) return 'allowed';
   if (association !== undefined && TRUSTED_ASSOCIATIONS.has(association.trim().toUpperCase())) return 'association';
   if (opts.issueAuthor !== undefined && opts.issueAuthor.toLowerCase() === lowerAuthor) return 'issue-author';
-  // An absent association means the provider models none at all (GitLab notes): there is no signal to
-  // fail closed on, and doing so would reject Vanguard's own spec/research comments — parking ready
-  // tickets as "needs info", re-posting specs and shipping every MR as a declared-partial PR. Those
-  // providers keep their pre-gate behaviour (allowlist them to get a boundary). A *supplied*
-  // association, '' included, is a real signal and fails closed.
-  if (association === undefined) return 'no-association';
+  // An absent association means the provider models none at all (GitLab notes). With no identity
+  // signal configured there is nothing to fail closed on, so those providers keep their pre-gate
+  // behaviour. Once the operator names trusted logins (allowlist or bot logins), an unlisted author
+  // fails closed, or the allowlist would not be a boundary. Vanguard's own GitLab notes stay trusted
+  // because the fetcher stamps the glab user's notes. A *supplied* association, '' included, is a
+  // real signal and fails closed.
+  if (association === undefined) {
+    const hasIdentitySignal = (opts.allowedAuthors ?? []).length > 0 || (opts.botLogins ?? []).length > 0;
+    return hasIdentitySignal ? 'untrusted' : 'no-association';
+  }
   return 'untrusted';
 }
 
