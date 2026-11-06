@@ -118,8 +118,9 @@ export function listSpawns(): Promise<SpawnInfo[]> {
   return call('list_spawns', undefined);
 }
 
-export function spawnRun(cwd: string, command: string): Promise<number> {
-  return call('spawn_run', { cwd, command });
+/** Spawn `argv` (program first) in `cwd` without a shell — see `spawn_run` in the wire catalogue. */
+export function spawnRun(cwd: string, argv: string[]): Promise<number> {
+  return call('spawn_run', { cwd, argv });
 }
 
 export function killRun(pid: number): Promise<void> {
