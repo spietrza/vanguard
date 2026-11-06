@@ -128,6 +128,8 @@ const SECRETS_FILE = `${SECRETS_DIR}/secrets.env`;
 
 type SecretsMode = 'tmpfs' | 'env-file';
 
+const HOST_GATEWAY_NAME = 'host.docker.internal';
+
 /** Runs an isolated command environment as a detached Docker container. */
 export class DockerSandboxProvider implements IsolatedSandboxProvider {
   readonly id: string;
@@ -165,6 +167,14 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     return `vg-${this.id}`;
   }
 
+  /** An explicit `hostGateway` wins; otherwise the alias is added only when some value handed to the
+   * sandbox (env, secrets, forwarded env) names host.docker.internal. */
+  private needsHostGateway(): boolean {
+    if (this.config.hostGateway !== undefined) return this.config.hostGateway;
+    const values = [...Object.values(this.config.env ?? {}), ...Object.values(this.secrets)];
+    return values.some((value) => value.toLowerCase().includes(HOST_GATEWAY_NAME));
+  }
+
   private get hasSecrets(): boolean {
     return Object.keys(this.secrets).length > 0;
   }
@@ -193,9 +203,11 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
    * without Docker installed. */
   buildRunArgs(): string[] {
     const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`, ...ownerLabelArgs()];
-    // Make the host reachable as host.docker.internal (so HTTPS_PROXY can point at a host egress
-    // proxy). Default on Docker Desktop; required on Linux. host-gateway needs Docker >= 20.10.
-    args.push('--add-host', 'host.docker.internal:host-gateway');
+    // Map host.docker.internal to the host only for a sandbox that is pointed there (see
+    // `hostGateway`): a host egress proxy (`startEgressProxy`), or a provider endpoint on the docker
+    // host. Required on Linux (Docker Desktop resolves the name itself); host-gateway needs Docker
+    // >= 20.10. The egress enclave and the llm-proxy sidecar are reached by container name instead.
+    if (this.needsHostGateway()) args.push('--add-host', `${HOST_GATEWAY_NAME}:host-gateway`);
     if (this.config.network !== undefined) args.push('--network', this.config.network);
     if (this.config.memoryMb !== undefined) args.push('--memory', `${this.config.memoryMb}m`);
     if (this.config.cpus !== undefined) args.push('--cpus', String(this.config.cpus));
