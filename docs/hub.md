@@ -47,6 +47,8 @@ This opens a browser at the printed URL.
    that host, so it needs Docker and the token there. Local mode has no login of its own: never
    publish the port. `VANGUARD_HUB_ALLOW_ADD=1` enables Add project and Clone repository on a
    non-loopback bind (see [Modes](#modes) and [Coolify / Docker Compose](#coolify--docker-compose)).
+   Reaching it under a hostname (rather than an IP address) needs that hostname allowed:
+   `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (or `--allowed-host hub.example.com`).
 
 ## Runs always use the LLM proxy
 
@@ -76,14 +78,31 @@ warning naming the provider rather than leaving the exposure silent:
 
 - **Local mode** — no authentication, binds `127.0.0.1` by default. Intended for running on your own
   machine, reachable only from itself.
-- **Container mode** — binds `0.0.0.0` because Docker port-mapping requires it.
+- **Container mode** — binds `0.0.0.0` because Docker port-mapping requires it. Reached under a
+  hostname, set `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (every hostname the browser uses,
+  including a non-default port).
 
 Local mode has no authentication — on a VPS put it behind Tailscale or an authenticating reverse proxy,
 never a published port.
 
+### Allowed Hosts (DNS rebinding)
+
+The hub checks the `Host` header of every request — before serving the SPA, which carries a live
+token — and answers `403` for anything it doesn't recognise, so a page on an attacker-controlled
+domain cannot rebind that domain to the hub's address and drive it. Allowed by default, on the
+actually-bound port: `localhost`, and any **IP literal** (IPv4, or a bracketed IPv6 — `127.0.0.1`,
+`[::1]`, `0.0.0.0`, a LAN address, a Tailscale address). DNS rebinding can only produce a *hostname*,
+never an IP literal, so `--host 0.0.0.0` and the URL the CLI prints and opens work with no flag.
+
+Any other hostname — a reverse proxy's public name, a container's service name — must be opted in
+with `--allowed-host <host[:port]>` (repeatable) or `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated).
+Each value is matched against the `Host` header exactly, case-insensitively, so include the port
+whenever the browser's URL has a non-default one. It takes a bare `host[:port]`: a scheme, a path, a
+wildcard, an unbracketed IPv6 literal or a non-numeric port is a startup error, not a silent 403.
+
 The same-origin check (`sameOriginOk` in `src/hub/server.ts`) compares the request's `Origin` header
 against its own `Host` header, not scheme, so the hub works behind an HTTPS-terminating reverse proxy
-with no extra hub flags, provided the proxy preserves the public `Host` header (including any
+when `--allowed-host <public-host[:port]>` permits the public Host and the proxy preserves that header (including any
 non-default port). Only HTTP(S) origins are accepted; the browser's `https://` Origin matches
 the public `Host` even though the proxy connects to the hub over HTTP.
 
@@ -95,11 +114,13 @@ commands, `false` stays `false`); an error answers `400`/`404`/`500 {"error": {"
 `kind` = `bad-request` or `internal`. `apps/desktop/src/transport.ts` unwraps `result` and rejects with
 `error.message`, so both sides must keep this envelope.
 
-**`src/hub-wire.ts` is the single source of truth for this envelope, the SSE frame shape, and the hub
-marker** — a zero-import module copied verbatim into `apps/desktop/src/hub-wire.ts` by `pnpm gen:wire`
+**`src/hub-wire.ts` is the single source of truth for this envelope, the SSE frame shape, the hub
+marker, and the token's header/query-parameter names** — a zero-import module copied verbatim into
+`apps/desktop/src/hub-wire.ts` by `pnpm gen:wire`
 (drift caught by `src/wire.test.ts`). The server (`src/hub/server.ts`, `events.ts`, `static.ts`) and the
 browser (`apps/desktop/src/transport.ts`) both call its `encodeResult`/`encodeError`/`decodeResponse`/
-`encodeEvent`/`decodeEvent`/`HUB_MARKER` instead of hand-rolling either side of the wire. A reconnecting
+`encodeEvent`/`decodeEvent`/`HUB_MARKER`/`HUB_TOKEN_HEADER`/`HUB_TOKEN_QUERY_PARAM` instead of
+hand-rolling either side of the wire. A reconnecting
 SSE client whose `Last-Event-ID` gap exceeds the replay ring gets a `stream-reset` frame instead of a
 replay; `transport.ts` resyncs by re-running its snapshot fetches rather than trusting the stream alone.
 
@@ -115,6 +136,7 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 | `VANGUARD_HUB_WATCH_INTERVAL_MS` | `2000` |
 | `VANGUARD_HUB_BROWSE_ROOT` | `$HOME` |
 | `VANGUARD_HUB_ALLOW_ADD` | — |
+| `VANGUARD_HUB_ALLOWED_HOSTS` | — (comma-separated exact Host values, added to `localhost`/any IP literal on the bound port) |
 | `VANGUARD_HUB_CLONE_HOSTS` | — (comma-separated hosts, added to `github.com`/`gitlab.com`) |
 
 ## Add project: existing folder or clone a URL
@@ -168,6 +190,7 @@ services:
     environment:
       GH_TOKEN: ${GH_TOKEN}
       VANGUARD_MAX_SANDBOXES: "1"
+      VANGUARD_HUB_ALLOWED_HOSTS: hub.example.com # every Host the browser uses; loopback only by default
 
 volumes:
   vanguard-hub-config:
@@ -216,12 +239,13 @@ process as the HTTP server, so give the container the same RAM headroom, and kee
 ## CLI flags
 
 ```
-vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no-open]
+vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no-open] [--allowed-host <host[:port]>]
 ```
 
 | Flag | Overrides | Default |
 |---|---|---|
 | `--repo <path>` | — | cwd; seeded into the project store on startup if it's a git work tree and not already present |
+| `--allowed-host <host[:port]>` (repeatable) | `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated, additive) | `localhost` / any IP literal on the bound port |
 | `--host <addr>` | `VANGUARD_HUB_HOST` | `127.0.0.1` |
 | `--port <n>` | `VANGUARD_HUB_PORT` | `7777` (1-65535; an invalid explicit `--port` is a startup error) |
 | `--ui-dir <dir>` | `VANGUARD_HUB_UI_DIR` | `<pkg>/apps/desktop/dist` |
@@ -232,3 +256,12 @@ A missing or unbuilt `--ui-dir` fails at startup, naming `pnpm --dir apps/deskto
 prints the no-auth warning above and disables `add_project`/`browse_dirs`/`clone_project` unless
 `VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
 and the project file watchers.
+
+The SPA receives a fresh per-launch token. RPC requests require `x-vanguard-hub-token`; SSE requests
+require the `token` query parameter. Host checks also protect the SPA response against DNS rebinding.
+The token stops a page on another origin from driving the hub; it is not authentication — anyone who
+can fetch `GET /` (any local process, anyone the proxy lets through) reads it out of the HTML, so it
+does not replace authentication at the reverse proxy. Because `/events` carries it as a query
+parameter, it lands in reverse-proxy access logs; it is regenerated on every hub launch, so a logged
+value stops working once the hub restarts (and an already-open page must be reloaded to pick up the
+new one).

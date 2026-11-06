@@ -14,6 +14,16 @@
  * invoke/listen. */
 export const HUB_MARKER = '<script>window.__VANGUARD_HUB__=true</script>';
 
+/** Per-launch auth token (src/hub/server.ts), carried on every `/rpc/*` request as this header and
+ * on `/events` (an `EventSource` cannot set headers) as this query parameter. Both sides read the
+ * same two names from here so they cannot drift. */
+export const HUB_TOKEN_HEADER = 'x-vanguard-hub-token';
+export const HUB_TOKEN_QUERY_PARAM = 'token';
+
+/** The hub's own "your token is dead" message, in the `{error:{message}}` envelope of its 401 —
+ * `src/hub/server.ts` sends it, `isHubTokenRejected` below recognises it. */
+export const HUB_TOKEN_REJECTED = 'invalid hub token';
+
 /** `BadRequestError`/`FlowError`/`VanguardError` are caller-correctable (`bad-request`); anything
  * else is a real fault (`internal`) — `src/hub/rpc.ts`'s `classifyError` is the one place that maps
  * a thrown value to this vocabulary. */
@@ -39,6 +49,19 @@ export function encodeError(error: WireError, status?: number): { status: number
   return { status: status ?? (error.kind === 'bad-request' ? 400 : 500), body: { error } };
 }
 
+/** The message out of an error envelope, for any body shape (including a non-object one). */
+function wireErrorMessage(body: unknown): string | undefined {
+  const message = (body as { error?: { message?: unknown } } | null | undefined)?.error?.message;
+  return typeof message === 'string' ? message : undefined;
+}
+
+/** True only for the hub's own 401 body — "this page's per-launch token is dead, reload"
+ * (`apps/desktop/src/transport.ts`). A 401 from an authenticating reverse proxy in front of the hub
+ * is a different problem a reload won't fix, so it must not match. */
+export function isHubTokenRejected(body: unknown): boolean {
+  return wireErrorMessage(body) === HUB_TOKEN_REJECTED;
+}
+
 /**
  * Decode one `/rpc/<cmd>` response. Throws the server's message string (never returns `undefined`):
  * a non-2xx status throws `error.message` (or a fallback naming the status), and a 2xx body without
@@ -46,8 +69,7 @@ export function encodeError(error: WireError, status?: number): { status: number
  */
 export function decodeResponse<T>(status: number, body: unknown): T {
   if (status < 200 || status >= 300) {
-    const message = (body as { error?: { message?: unknown } } | null)?.error?.message;
-    throw typeof message === 'string' ? message : `request failed with status ${status}`;
+    throw wireErrorMessage(body) ?? `request failed with status ${status}`;
   }
   if (
     typeof body !== 'object' ||
