@@ -4,8 +4,7 @@ import { Minus, Plus } from 'lucide-react';
 import { subscribe as listen } from '../../transport';
 import { spawnRun, killRun, listSpawns, listTasks, SPAWN_OUTPUT_EVENT, SPAWN_EXIT_EVENT } from '../../ipc';
 import { useAppConfig, useAsync } from '../../hooks';
-import { watchCommand } from '../../command';
-import { SOURCES } from '../../sources';
+import { watchArgv } from '../../command';
 import { boardCountLabels } from '../board/counts';
 import { LaunchPanel, type Spawn } from '../inspector/LaunchPanel';
 import type { ActiveRun } from '../../vanguard-output';
@@ -72,17 +71,19 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
   const running = spawn !== null && spawn.exit === undefined;
 
   const start = async (): Promise<void> => {
-    // The command is built from config, so validate before it reaches the shell launcher.
-    if (!SOURCES.includes(source)) {
-      setError(`Invalid Task Source "${source}" — set github / gitlab / linear in Settings.`);
+    // The argv is built from repo config: watchArgv validates source/provider (throws), and
+    // spawn_run runs it without a shell, so no config value can become shell syntax.
+    let argv: string[];
+    try {
+      argv = watchArgv(cfg, { source, concurrency, loopV1 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
       return;
     }
     setError(null);
-    const n = Math.max(1, Math.floor(concurrency) || 1);
-    const cmd = watchCommand(cfg, { source, concurrency: n, loopV1 });
     try {
-      const pid = await spawnRun(project, cmd);
-      setSpawn({ pid, command: cmd, lines: [] });
+      const pid = await spawnRun(project, argv);
+      setSpawn({ pid, command: argv.join(' '), lines: [] });
     } catch (e) {
       setError(String(e));
     }

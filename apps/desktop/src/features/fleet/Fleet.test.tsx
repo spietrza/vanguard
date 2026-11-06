@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Fleet } from './Fleet';
 import type { BoardTask } from '../../wire';
 
@@ -13,8 +13,34 @@ vi.mock('../../ipc', () => ({
   SPAWN_EXIT_EVENT: 'spawn:exit',
 }));
 vi.mock('../../transport', () => ({ subscribe: vi.fn(async () => () => {}) }));
-import { listTasks } from '../../ipc';
+import { listTasks, readAppConfigStrict, spawnRun } from '../../ipc';
 const mockListTasks = vi.mocked(listTasks);
+
+describe('Fleet watch loop launch — repo config cannot inject', () => {
+  test('a provider carrying shell syntax is refused and nothing is spawned', async () => {
+    mockListTasks.mockResolvedValue({ tasks: [], capped: false });
+    vi.mocked(readAppConfigStrict).mockResolvedValueOnce({ provider: 'claude; touch /tmp/x #' });
+    vi.mocked(spawnRun).mockClear();
+    render(<Fleet project="/repo" active={[]} />);
+    await act(async () => {});
+    await act(async () => fireEvent.click(screen.getByLabelText('Toggle watch loop')));
+    expect(await screen.findByText(/Invalid provider/)).toBeInTheDocument();
+    expect(spawnRun).not.toHaveBeenCalled();
+  });
+
+  test('a valid config is spawned as an argv, not a shell string', async () => {
+    mockListTasks.mockResolvedValue({ tasks: [], capped: false });
+    vi.mocked(readAppConfigStrict).mockResolvedValueOnce({ provider: 'codex' });
+    vi.mocked(spawnRun).mockClear();
+    vi.mocked(spawnRun).mockResolvedValueOnce(7);
+    render(<Fleet project="/repo" active={[]} />);
+    await act(async () => {});
+    await act(async () => fireEvent.click(screen.getByLabelText('Toggle watch loop')));
+    expect(spawnRun).toHaveBeenCalledWith('/repo', [
+      'vanguard', 'watch', '--github', '--concurrency', '3', '--provider', 'codex', '--max-turns', '30',
+    ]);
+  });
+});
 
 function waitingTask(id: string): BoardTask {
   return { id, title: id, column: 'queued', state: 'ready for spec', waiting: true };
