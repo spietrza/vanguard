@@ -143,6 +143,12 @@ shapes (kept decoupled from Vanguard's build, per the design spec §4).
 - **Credentials** are inherited from the operator environment; the app never stores or brokers them
   (design spec §12). A *bundled* `.app` launched from Finder has a minimal env — run from a terminal for
   now.
+- **Task board "New Run" always uses the LLM proxy.** It goes through `sidecar.rs`'s `vanguard
+  __sidecar` subprocess, the same `productionDeps()` dispatch the hub uses — see
+  [Runs always use the LLM proxy](../../docs/hub.md#runs-always-use-the-llm-proxy) for which
+  credentials that covers, which don't, and what a failed proxy sidecar looks like. **Launch** below is
+  a different path and is not covered: it is an ordinary CLI invocation, so the CLI's own opt-in
+  `--llm-proxy` (off by default) applies instead.
 - **Launch command** is operator-supplied (a local run launcher, like a terminal) — spawned via `sh -c`
   in the project dir. Not untrusted input.
 - **Spec / remote** fetches require an authed `gh` / `linear` on `PATH`; they fail gracefully otherwise.
