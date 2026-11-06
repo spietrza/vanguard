@@ -26,6 +26,14 @@ export interface StaticOptions {
   token?: string;
 }
 
+/** `index.html` carries a live per-launch token, so no other page may frame it: a framed hub page
+ * would run on the hub's own origin and could be driven by clickjacking. Sent with every static
+ * response (both headers — `X-Frame-Options` for anything that predates `frame-ancestors`). */
+const FRAME_DENY_HEADERS = {
+  'x-frame-options': 'DENY',
+  'content-security-policy': "frame-ancestors 'none'",
+} as const;
+
 /**
  * Handle one static GET request. Returns true if it handled (and ended) the response, false if the
  * caller should try another route (e.g. this wasn't a GET, or isn't a path this server owns — never
@@ -58,6 +66,7 @@ export async function serveStatic(opts: StaticOptions, req: IncomingMessage, res
       res.writeHead(200, {
         'content-type': contentType(filePath),
         'cache-control': 'public, max-age=31536000, immutable',
+        ...FRAME_DENY_HEADERS,
       });
       res.end(req.method === 'HEAD' ? undefined : body);
       return true;
@@ -71,7 +80,11 @@ export async function serveStatic(opts: StaticOptions, req: IncomingMessage, res
   try {
     const raw = await readFile(join(opts.uiDir, 'index.html'), 'utf8');
     const html = injectHubMarker(raw, opts.token);
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      ...FRAME_DENY_HEADERS,
+    });
     res.end(req.method === 'HEAD' ? undefined : html);
     return true;
   } catch {

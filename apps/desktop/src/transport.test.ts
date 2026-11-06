@@ -252,6 +252,21 @@ test('a 401 from /rpc/<cmd> also notifies onHubRestart, and still rejects with t
   unlisten();
 });
 
+test("a 401 that isn't the hub's own envelope (a reverse proxy's) does not claim the hub restarted", async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Unauthorized', kind: 'bad-request' } }), { status: 401 })),
+  );
+  const restarts: number[] = [];
+  const unlisten = await onHubRestart(() => restarts.push(1));
+
+  await expect(invoke('list_runs', {})).rejects.toBe('Unauthorized');
+  expect(restarts).toEqual([]);
+
+  unlisten();
+});
+
 test('onHubRestart is a no-op outside hub mode', async () => {
   const unlisten = await onHubRestart(() => {
     throw new Error('must not be called under Tauri');

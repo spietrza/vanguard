@@ -4,11 +4,12 @@
 // if it can trigger the request.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { isIP } from 'node:net';
 import { serveStatic } from './static.js';
 import { EventBus } from './events.js';
 import { writeJson, jsonError } from './json-response.js';
 import { dispatchRpc, classifyError, type RpcContext } from './rpc.js';
-import { encodeError, encodeResult, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM } from '../hub-wire.js';
+import { encodeError, encodeResult, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM, HUB_TOKEN_REJECTED } from '../hub-wire.js';
 import { ProjectAllowlist, type BindOptions } from './allowlist.js';
 import { WatchRegistry, type WatchOptions } from './watch.js';
 import { createRunSession } from './run-session.js';
@@ -39,8 +40,9 @@ export interface HubServerOptions {
   deps?: SidecarDeps;
   spawnComplete?: SpawnComplete;
   /** Extra permitted `Host` header values (`host[:port]`, exact match, case-insensitive) beyond the
-   * default loopback set for the actual bound port — `--allowed-host` / `VANGUARD_HUB_ALLOWED_HOSTS`,
-   * for the VPS / reverse-proxy deployment (docs/hub.md). */
+   * default — `localhost` and any IP literal on the actual bound port (see `hostAllowed`). This is
+   * `--allowed-host` / `VANGUARD_HUB_ALLOWED_HOSTS`, for the VPS / reverse-proxy deployment
+   * (docs/hub.md). */
   allowedHosts?: readonly string[];
 }
 
@@ -67,9 +69,37 @@ function tokenOk(candidate: string | null | undefined, token: string): boolean {
   return bytes.length === expected.length && timingSafeEqual(bytes, expected);
 }
 
-/** Names the fix: the default allowlist is loopback-only, so a reverse-proxy or container deployment
- * reached under its own hostname has to opt that Host in (docs/hub.md). */
+/** Names the fix: a named-host deployment (a reverse proxy, a container reached under its own
+ * hostname) has to opt that Host in — an IP literal and loopback need no flag (docs/hub.md). */
 const HOST_NOT_ALLOWED = 'Host not allowed — pass --allowed-host <host[:port]> or set VANGUARD_HUB_ALLOWED_HOSTS';
+
+/** Split a `Host` header into hostname and port. `[::1]:7777` → `{ hostname: '::1', port: 7777 }`; a
+ * missing port means 80. `undefined` for anything malformed — a bare (unbracketed) IPv6 literal or a
+ * non-numeric port. Exported for `src/cli/hub.ts`, which rejects the same shapes at startup. */
+export function splitHostPort(host: string): { hostname: string; port: number } | undefined {
+  const match = /^(?:\[([^\]]+)\]|([^:]*))(?::(\d+))?$/.exec(host);
+  if (!match) return undefined;
+  const [, bracketed, bare, port] = match;
+  if (bracketed === undefined ? bare === '' : isIP(bracketed) !== 6) return undefined;
+  return { hostname: bracketed ?? bare!, port: port === undefined ? 80 : Number(port) };
+}
+
+/**
+ * DNS rebinding works by pointing a *hostname* at this server's address, so a `Host` the browser
+ * could only have produced from an IP literal it connected to directly — IPv4, or a bracketed IPv6 —
+ * is safe on the actually-bound port: `--host 0.0.0.0`, a LAN address and a Tailscale address all
+ * work with no `--allowed-host` (including the URL the CLI prints and opens). `localhost` resolves
+ * to loopback everywhere, so it gets the same treatment. Any other hostname must be opted in
+ * explicitly, matched against the `Host` header exactly (case-insensitive `host[:port]`).
+ */
+function hostAllowed(host: string | undefined, boundPort: number, allowedHosts: readonly string[]): boolean {
+  if (host === undefined) return false;
+  const lower = host.toLowerCase();
+  if (allowedHosts.some((allowed) => allowed.toLowerCase() === lower)) return true;
+  const parsed = splitHostPort(lower);
+  if (parsed === undefined || parsed.port !== boundPort) return false;
+  return parsed.hostname === 'localhost' || isIP(parsed.hostname) !== 0;
+}
 
 function notFound(res: ServerResponse): void {
   jsonError(res, 404, 'not found', 'bad-request');
@@ -189,13 +219,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  const port = req.socket.localPort;
-  const hosts = new Set([
-    `localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`,
-    ...(port === 80 ? ['localhost', '127.0.0.1', '[::1]'] : []),
-    ...(opts.allowedHosts ?? []).map((host) => host.toLowerCase()),
-  ]);
-  if (!req.headers.host || !hosts.has(req.headers.host.toLowerCase())) {
+  if (!hostAllowed(req.headers.host, req.socket.localPort ?? 0, opts.allowedHosts ?? [])) {
     jsonError(res, 403, HOST_NOT_ALLOWED, 'bad-request');
     return;
   }
@@ -211,7 +235,7 @@ async function handleRequest(
   if (pathname === '/events') {
     if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
     if (!tokenOk(url.searchParams.get(HUB_TOKEN_QUERY_PARAM), token)) {
-      jsonError(res, 401, 'invalid hub token', 'bad-request');
+      jsonError(res, 401, HUB_TOKEN_REJECTED, 'bad-request');
       return;
     }
     eventBus.subscribe(req, res);
@@ -222,7 +246,7 @@ async function handleRequest(
   if (pathname.startsWith('/rpc/')) {
     if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
     if (!tokenOk(singleHeader(req.headers[HUB_TOKEN_HEADER]), token)) {
-      jsonError(res, 401, 'invalid hub token', 'bad-request');
+      jsonError(res, 401, HUB_TOKEN_REJECTED, 'bad-request');
       return;
     }
     await handleRpcRequest(ctx, req, res, pathname.slice('/rpc/'.length));

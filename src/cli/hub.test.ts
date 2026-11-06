@@ -55,6 +55,24 @@ function command(overrides: Partial<HubCommand> = {}): HubCommand {
   return { kind: 'hub', repoPath: repo, host: '127.0.0.1', port: 0, uiDir, open: true, ...overrides };
 }
 
+/** GET `path` from a URL the CLI printed, sending that URL's authority as the `Host` header — what
+ * the browser the CLI opens sends. The connection itself goes over loopback (a `0.0.0.0` bind
+ * accepts it there too), because `fetch` rewrites `Host` and some sandboxes intercept connections to
+ * non-loopback addresses. */
+function httpGet(printedUrl: string, path: string): Promise<{ status: number; body: string }> {
+  const { host, port } = new URL(printedUrl);
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, headers: { host } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode!, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 describe('hubCommand', () => {
   test('passes CLI and environment allowed Hosts to the server', async () => {
     process.env.VANGUARD_HUB_ALLOWED_HOSTS = ' env.example, ';
@@ -82,12 +100,54 @@ describe('hubCommand', () => {
     }
   });
 
+  test('a non-loopback bind serves the URL it prints, with no --allowed-host (an IP-literal Host)', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined); // the no-auth warning
+    try {
+      await hubCommand(command({ host: '0.0.0.0' }));
+      const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
+      const url = line.slice('Vanguard Hub → '.length);
+      expect(url).toMatch(/^http:\/\/0\.0\.0\.0:\d+$/);
+      const page = await httpGet(url, '/');
+      expect(page.status).toBe(200);
+      expect(page.body).toContain('__VANGUARD_HUB_TOKEN__');
+      expect((await httpGet(url, '/healthz')).status).toBe(200);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.emit('SIGINT');
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  });
+
   test('an allowed Host carrying a scheme, a path or a wildcard is a startup error', async () => {
     for (const bad of ['https://hub.example', 'hub.example/ui', '*.example']) {
       await expect(hubCommand(command({ allowedHosts: [bad] }))).rejects.toThrow(/bare host\[:port\]/);
       process.env.VANGUARD_HUB_ALLOWED_HOSTS = `ok.example,${bad}`;
       await expect(hubCommand(command())).rejects.toThrow(/bare host\[:port\]/);
       delete process.env.VANGUARD_HUB_ALLOWED_HOSTS;
+    }
+  });
+
+  test('an allowed Host no Host header could carry — a bare IPv6 literal, a non-numeric port — is a startup error', async () => {
+    for (const bad of ['::1', 'fe80::1', 'hub.example:http', 'hub.example:8080x', ':8080']) {
+      await expect(hubCommand(command({ allowedHosts: [bad] }))).rejects.toThrow(
+        /bare host\[:port\], with any IPv6 literal bracketed .* and a numeric port/,
+      );
+      process.env.VANGUARD_HUB_ALLOWED_HOSTS = `ok.example,${bad}`;
+      await expect(hubCommand(command())).rejects.toThrow(/any IPv6 literal bracketed/);
+      delete process.env.VANGUARD_HUB_ALLOWED_HOSTS;
+    }
+  });
+
+  test('a bracketed IPv6 literal with a port is a valid allowed Host', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await expect(hubCommand(command({ allowedHosts: ['[2001:db8::1]:8080', 'hub.example'] }))).resolves.toBeUndefined();
+    } finally {
+      logSpy.mockRestore();
+      process.emit('SIGINT');
+      await new Promise((r) => setTimeout(r, 0));
     }
   });
 

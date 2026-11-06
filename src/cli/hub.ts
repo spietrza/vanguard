@@ -3,7 +3,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { execa } from 'execa';
-import { createHubServer } from '../hub/server.js';
+import { createHubServer, splitHostPort } from '../hub/server.js';
 import { injectHubMarker } from '../hub/static.js';
 import { assertGitWorkTreeDir } from '../hub/allowlist.js';
 import { loadPaths, add as addProject } from '../hub/projects.js';
@@ -16,14 +16,23 @@ function parseHostList(raw: string | undefined): string[] {
 }
 
 /** `allowedHosts` is matched against the `Host` header exactly (case-insensitive `host[:port]`), so a
- * URL or a glob would simply never match — refuse it at startup instead of serving 403s the operator
- * cannot explain. A scheme (`https://hub.example`) and a path both carry `/`. */
+ * URL, a glob, or anything a `Host` header cannot hold — an unbracketed IPv6 literal, a non-numeric
+ * port — would simply never match. Refuse all of those at startup instead of serving 403s the
+ * operator cannot explain. */
 function assertPlainHosts(hosts: readonly string[]): void {
-  const invalid = hosts.find((host) => /[/*]/.test(host));
-  if (invalid !== undefined) {
-    throw new Error(
-      `Vanguard Hub: invalid allowed Host "${invalid}" — --allowed-host/VANGUARD_HUB_ALLOWED_HOSTS take a bare host[:port], with no scheme, path or wildcard.`,
-    );
+  for (const host of hosts) {
+    // A scheme and a path are rejected by `splitHostPort` too, but they are the likely mistakes —
+    // check them first so the message names them rather than talking about brackets and ports.
+    const requirement = /[/*]/.test(host)
+      ? 'with no scheme, path or wildcard'
+      : splitHostPort(host) === undefined
+        ? 'with any IPv6 literal bracketed ("[::1]:7777") and a numeric port'
+        : undefined;
+    if (requirement !== undefined) {
+      throw new Error(
+        `Vanguard Hub: invalid allowed Host "${host}" — --allowed-host/VANGUARD_HUB_ALLOWED_HOSTS take a bare host[:port], ${requirement}.`,
+      );
+    }
   }
 }
 

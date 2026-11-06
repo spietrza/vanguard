@@ -47,19 +47,34 @@ This opens a browser at the printed URL.
    that host, so it needs Docker and the token there. Local mode has no login of its own: never
    publish the port. `VANGUARD_HUB_ALLOW_ADD=1` enables Add project and Clone repository on a
    non-loopback bind (see [Modes](#modes) and [Coolify / Docker Compose](#coolify--docker-compose)).
-   Reaching it under a hostname other than loopback needs that hostname allowed:
+   Reaching it under a hostname (rather than an IP address) needs that hostname allowed:
    `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (or `--allowed-host hub.example.com`).
 
 ## Modes
 
 - **Local mode** — no authentication, binds `127.0.0.1` by default. Intended for running on your own
   machine, reachable only from itself.
-- **Container mode** — binds `0.0.0.0` because Docker port-mapping requires it. Set
-  `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (every hostname the browser uses, including a
-  non-default port) — only loopback Hosts are allowed by default, so any other `Host` gets a 403.
+- **Container mode** — binds `0.0.0.0` because Docker port-mapping requires it. Reached under a
+  hostname, set `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (every hostname the browser uses,
+  including a non-default port).
 
 Local mode has no authentication — on a VPS put it behind Tailscale or an authenticating reverse proxy,
 never a published port.
+
+### Allowed Hosts (DNS rebinding)
+
+The hub checks the `Host` header of every request — before serving the SPA, which carries a live
+token — and answers `403` for anything it doesn't recognise, so a page on an attacker-controlled
+domain cannot rebind that domain to the hub's address and drive it. Allowed by default, on the
+actually-bound port: `localhost`, and any **IP literal** (IPv4, or a bracketed IPv6 — `127.0.0.1`,
+`[::1]`, `0.0.0.0`, a LAN address, a Tailscale address). DNS rebinding can only produce a *hostname*,
+never an IP literal, so `--host 0.0.0.0` and the URL the CLI prints and opens work with no flag.
+
+Any other hostname — a reverse proxy's public name, a container's service name — must be opted in
+with `--allowed-host <host[:port]>` (repeatable) or `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated).
+Each value is matched against the `Host` header exactly, case-insensitively, so include the port
+whenever the browser's URL has a non-default one. It takes a bare `host[:port]`: a scheme, a path, a
+wildcard, an unbracketed IPv6 literal or a non-numeric port is a startup error, not a silent 403.
 
 The same-origin check (`sameOriginOk` in `src/hub/server.ts`) compares the request's `Origin` header
 against its own `Host` header, not scheme, so the hub works behind an HTTPS-terminating reverse proxy
@@ -97,7 +112,7 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 | `VANGUARD_HUB_WATCH_INTERVAL_MS` | `2000` |
 | `VANGUARD_HUB_BROWSE_ROOT` | `$HOME` |
 | `VANGUARD_HUB_ALLOW_ADD` | — |
-| `VANGUARD_HUB_ALLOWED_HOSTS` | — (comma-separated exact Host values, added to loopback Hosts on the bound port) |
+| `VANGUARD_HUB_ALLOWED_HOSTS` | — (comma-separated exact Host values, added to `localhost`/any IP literal on the bound port) |
 | `VANGUARD_HUB_CLONE_HOSTS` | — (comma-separated hosts, added to `github.com`/`gitlab.com`) |
 
 ## Add project: existing folder or clone a URL
@@ -206,7 +221,7 @@ vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no
 | Flag | Overrides | Default |
 |---|---|---|
 | `--repo <path>` | — | cwd; seeded into the project store on startup if it's a git work tree and not already present |
-| `--allowed-host <host[:port]>` (repeatable) | `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated, additive) | loopback Hosts on the bound port |
+| `--allowed-host <host[:port]>` (repeatable) | `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated, additive) | `localhost` / any IP literal on the bound port |
 | `--host <addr>` | `VANGUARD_HUB_HOST` | `127.0.0.1` |
 | `--port <n>` | `VANGUARD_HUB_PORT` | `7777` (1-65535; an invalid explicit `--port` is a startup error) |
 | `--ui-dir <dir>` | `VANGUARD_HUB_UI_DIR` | `<pkg>/apps/desktop/dist` |

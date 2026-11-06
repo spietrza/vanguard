@@ -105,6 +105,20 @@ describe('serveStatic', () => {
     expect(indexRes.body).toContain('__VANGUARD_HUB__');
   });
 
+  test('every static response denies framing — the page carries a live hub token', async () => {
+    await mkdir(join(uiDir, 'assets'), { recursive: true });
+    await writeFile(join(uiDir, 'assets', 'x-abc123.js'), 'console.log(1)');
+    await writeFile(join(uiDir, 'index.html'), '<html><head></head><body></body></html>');
+
+    for (const path of ['/', '/index.html', '/assets/x-abc123.js']) {
+      const res = new FakeRes();
+      await serveStatic({ uiDir, token: 'tok' }, fakeReq(path), res as unknown as ServerResponse);
+      expect(res.statusCode, path).toBe(200);
+      expect(res.headers['x-frame-options'], path).toBe('DENY');
+      expect(res.headers['content-security-policy'], path).toBe("frame-ancestors 'none'");
+    }
+  });
+
   test('T-69 a traversal-style request is refused, not resolved outside uiDir', async () => {
     await writeFile(join(uiDir, 'index.html'), '<html><head></head><body></body></html>');
     const secretDir = await mkdtemp(join(tmpdir(), 'vanguard-hub-secret-'));

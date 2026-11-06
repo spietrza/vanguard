@@ -71,19 +71,22 @@ afterEach(async () => {
   await rm(uiDir, { recursive: true, force: true });
 });
 
+/** `fetch` rewrites the `Host` header from the URL; node:http sends the one it is handed verbatim. */
+function withHost(path: string, host: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = request(baseUrl + path, { headers: { host } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode!, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 describe('hub server', () => {
   test('rejects untrusted Hosts before disclosing the SPA token, allows explicit proxy Hosts', async () => {
-    const withHost = (path: string, host: string): Promise<{ status: number; body: string }> =>
-      new Promise((resolve, reject) => {
-        const req = request(baseUrl + path, { headers: { host } }, (res) => {
-          let body = '';
-          res.setEncoding('utf8');
-          res.on('data', (chunk: string) => { body += chunk; });
-          res.on('end', () => resolve({ status: res.statusCode!, body }));
-        });
-        req.on('error', reject);
-        req.end();
-      });
     for (const path of ['/', '/healthz', '/rpc/list_runs', '/events']) {
       const res = await withHost(path, 'evil.example');
       expect(res.status).toBe(403);
@@ -91,6 +94,30 @@ describe('hub server', () => {
     }
     expect((await withHost('/', 'hub.example')).status).toBe(200);
     expect((await withHost('/', 'hub.example:1234')).status).toBe(403);
+  });
+
+  test('an IP-literal Host on the bound port needs no --allowed-host (DNS rebinding cannot make one)', async () => {
+    const { port } = hub.server.address() as AddressInfo;
+    for (const host of [
+      `127.0.0.1:${port}`,
+      `localhost:${port}`,
+      `0.0.0.0:${port}`, // what the browser sends for the URL `--host 0.0.0.0` prints and opens
+      `192.168.7.5:${port}`, // a LAN / Tailscale address reached directly
+      `[::1]:${port}`,
+    ]) {
+      const res = await withHost('/', host);
+      expect(res.status, host).toBe(200);
+      expect(res.body, host).toContain(hub.token);
+    }
+    for (const host of [
+      `127.0.0.1:${port + 1}`, // right address, not the port this socket is bound to
+      '127.0.0.1',
+      '::1', // an IPv6 literal must be bracketed to be a Host
+      `hub.internal:${port}`, // a hostname — only an explicit --allowed-host carries one
+      `127.0.0.1:${port}x`,
+    ]) {
+      expect((await withHost('/', host)).status, host).toBe(403);
+    }
   });
 
   test('requires the per-launch token for RPC and SSE, and only embeds it in the SPA', async () => {

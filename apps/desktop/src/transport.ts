@@ -2,8 +2,15 @@
 // Tauri's `invoke`/`listen` (the desktop app, and the branch vitest + dev/mockBackend.ts exercise)
 // and the hub's `POST /rpc/<cmd>` + `/events` SSE stream (a browser against `vanguard hub`, no Tauri
 // runtime present). Mode resolution order: the server-injected `window.__VANGUARD_HUB__` marker
-// (src/hub/static.ts), then `VITE_VANGUARD_HUB=1` (lets `pnpm dev` point at a running hub), else Tauri.
-import { decodeResponse, decodeEvent, STREAM_RESET_EVENT, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM } from './hub-wire';
+// (src/hub/static.ts), then `VITE_VANGUARD_HUB=1` (the hub branch without the marker), else Tauri.
+import {
+  decodeResponse,
+  decodeEvent,
+  STREAM_RESET_EVENT,
+  HUB_TOKEN_HEADER,
+  HUB_TOKEN_QUERY_PARAM,
+  isHubTokenRejected,
+} from './hub-wire';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen, type UnlistenFn } from '@tauri-apps/api/event';
 
@@ -64,13 +71,15 @@ async function hubInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
     // Network failure (server unreachable, CORS, etc.) — reject with a string, like Tauri's Err(String).
     throw err instanceof Error ? err.message : String(err);
   }
-  if (response.status === 401) notifyHubRestarted();
   let body: unknown;
   try {
     body = await response.json();
   } catch (err) {
     throw err instanceof Error ? err.message : String(err);
   }
+  // Only the hub's own 401 envelope means "this page's token is dead"; a reverse proxy's 401 is a
+  // different problem, and telling the operator to reload would be wrong (docs/hub.md).
+  if (response.status === 401 && isHubTokenRejected(body)) notifyHubRestarted();
   return decodeResponse<T>(response.status, body);
 }
 

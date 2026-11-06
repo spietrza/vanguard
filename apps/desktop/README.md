@@ -52,9 +52,18 @@ through `invoke()`/`subscribe()`, which pick Tauri's IPC or the hub's `POST /rpc
 stream, depending on which of these is present, in order:
 
 1. `window.__VANGUARD_HUB__ === true` — the hub injects this marker into `index.html` itself.
-2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — lets `pnpm dev`'s hot-reloading dev server point at a
-   hub that's already running, instead of the Tauri/mock branch.
+2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — selects the hub branch instead of the Tauri/mock one.
 3. Otherwise, Tauri — the branch `vitest` and `dev/mockBackend.ts` always exercise.
+
+Alongside the marker, the hub injects a **per-launch token** into `index.html`
+(`window.__VANGUARD_HUB_TOKEN__`), which `transport.ts` sends on every `/rpc/<cmd>` and on `/events`.
+The hub requires it, so **the page must be served by the hub** — only then does it carry a token.
+That makes `VITE_VANGUARD_HUB=1` on Vite's own dev server (`http://localhost:1420`) a dead end: its
+page carries no token, and its same-origin `/rpc/<cmd>` goes to the dev server (which proxies nothing
+to the hub) rather than to a hub that would accept one. There is no escape hatch; to see a change
+against a real hub, rebuild and let the hub serve it (first recipe below). The token is minted
+per launch, so restarting the hub also invalidates an already-open page — the UI says so, and a
+reload picks up the new one.
 
 **Build the UI and run the hub against a real repo:**
 
@@ -63,12 +72,8 @@ pnpm --dir apps/desktop build          # emits apps/desktop/dist, which the hub 
 vanguard hub --repo /path/to/your/repo # from the repo root; prints the URL it opened
 ```
 
-**Point the Vite dev server at an already-running hub** (hot reload, no rebuild per change):
-
-```bash
-vanguard hub --repo /path/to/your/repo --no-open   # start the hub in one terminal
-VITE_VANGUARD_HUB=1 pnpm --dir apps/desktop dev     # in another — http://localhost:1420
-```
+Reaching the hub under a hostname other than loopback or an IP literal needs that Host allowed —
+`--allowed-host hub.example.com` (see `../../docs/hub.md`).
 
 **What's absent in hub mode:**
 
