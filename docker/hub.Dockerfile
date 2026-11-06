@@ -1,7 +1,9 @@
 # The Vanguard HUB image. Serves the desktop Inspector UI (apps/desktop) over plain HTTP/SSE via
 # `vanguard hub` (src/hub/*.ts, src/cli/hub.ts) for local/VPS use without Tauri. Runs agent sandboxes
 # via the host docker socket (docker-out-of-docker), same as docker/runner.Dockerfile.
-FROM node:24-bookworm-slim
+# Pinned by digest for a reproducible, tamper-evident base (the tag is kept for readability).
+# Bump: `docker buildx imagetools inspect node:24-bookworm-slim` and copy the index Digest.
+FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 
 # docker CLI (sibling-sandbox execution), git, gh (Remote-run listing + CI artifact import), xz (linear-cli install).
 RUN apt-get update \
