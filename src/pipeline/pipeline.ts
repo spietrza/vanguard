@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { hostGitArgs } from '../worktree/host-git.js';
 import { runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
@@ -840,7 +841,7 @@ export async function commitStage(ctx: RunContext, opts: CommitOptions): Promise
   if (!(await ctx.wm.isDirty(ctx.worktreePath))) return { committed: false, branch: ctx.branch };
   const name = opts.authorName ?? 'Vanguard';
   const email = opts.authorEmail ?? 'vanguard@local';
-  await execa('git', ['add', '-A'], { cwd: ctx.worktreePath });
+  await execa('git', hostGitArgs(['add', '-A']), { cwd: ctx.worktreePath });
   // --no-verify skips the target repo's husky/pre-commit hooks. Vanguard commits in an isolated worktree
   // without the project's node_modules, so hooks that run eslint/nx/tests (e.g. an `@nx/eslint-plugin`
   // lint or `nx run api:test-unit`) fail to resolve and would block every commit. Vanguard has its own
@@ -848,10 +849,10 @@ export async function commitStage(ctx: RunContext, opts: CommitOptions): Promise
   // redundant here.
   await execa(
     'git',
-    ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '--no-verify', '-m', opts.message],
+    hostGitArgs(['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '--no-verify', '-m', opts.message]),
     { cwd: ctx.worktreePath },
   );
-  const { stdout } = await execa('git', ['rev-parse', 'HEAD'], { cwd: ctx.worktreePath });
+  const { stdout } = await execa('git', hostGitArgs(['rev-parse', 'HEAD']), { cwd: ctx.worktreePath });
   return { committed: true, branch: ctx.branch, sha: stdout.trim() };
 }
 

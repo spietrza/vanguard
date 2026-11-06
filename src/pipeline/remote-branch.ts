@@ -3,6 +3,7 @@ import { redactTokens } from '../core/secret-scan.js';
 import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { neutralizeQuickActions } from '../tasks/gitlab.js';
 import type { RunContext } from '../core/vanguard.js';
+import { hostGitArgs, hostGitEnv } from '../worktree/host-git.js';
 
 /**
  * The git write path to the remote: push an existing PR branch, rebase a new branch onto the moved
@@ -13,8 +14,11 @@ import type { RunContext } from '../core/vanguard.js';
 /** `env` is merged over the process env for this one command. */
 export type CommandRunner = (file: string, args: string[], cwd: string, env?: Record<string, string>) => Promise<string>;
 
+/** Every command here runs in the run worktree: git gets the hook-free config, gh/glab pass it to the git they spawn. */
 const defaultRunner: CommandRunner = async (file, args, cwd, env): Promise<string> =>
-  (await execa(file, args, { cwd, ...(env !== undefined ? { env } : {}) })).stdout;
+  file === 'git'
+    ? (await execa(file, hostGitArgs(args), { cwd, ...(env !== undefined ? { env } : {}) })).stdout
+    : (await execa(file, args, { cwd, env: { ...hostGitEnv(), ...env } })).stdout;
 
 export interface PublishOptions {
   title: string;

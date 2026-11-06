@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { hostGitArgs } from '../worktree/host-git.js';
 import { runAgent } from '../core/vanguard.js';
 import { roundUsd } from '../core/usd.js';
 import type { RunContext, StageInput } from '../core/vanguard.js';
@@ -60,8 +61,8 @@ export async function forkAndSelect(
   // git reset --hard removes the intent-to-add index entries left by wm.diff(); git clean
   // then removes the resulting untracked files.
   const resetWorktree = async () => {
-    await execa('git', ['reset', '--hard', 'HEAD'], { cwd: ctx.worktreePath });
-    await execa('git', ['clean', '-fd'], { cwd: ctx.worktreePath });
+    await execa('git', hostGitArgs(['reset', '--hard', 'HEAD']), { cwd: ctx.worktreePath });
+    await execa('git', hostGitArgs(['clean', '-fd']), { cwd: ctx.worktreePath });
   };
 
   let costSoFar = 0;
@@ -119,7 +120,7 @@ export async function forkAndSelect(
     await resetWorktree();
     const winnerDiff = variants[winnerIndex]!.result.diff;
     if (winnerDiff) {
-      await execa('git', ['apply', '--whitespace=fix', '-'], {
+      await execa('git', hostGitArgs(['apply', '--whitespace=fix', '-']), {
         cwd: ctx.worktreePath,
         input: winnerDiff,
       });

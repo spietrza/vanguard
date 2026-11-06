@@ -1,6 +1,6 @@
 import { test, expect, afterEach, vi } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { invoke, isHubMode, subscribe, onStreamReset, onHubRestart } from './transport';
+import { invoke, isHubMode, subscribe, onStreamReset, onHubRestart, onHubConnectionIssue, captureHubToken } from './transport';
 
 /** Minimal fake EventSource — jsdom doesn't implement one. Tracks every instance so a test can
  * assert how many were actually constructed (the "one shared EventSource" guarantee). */
@@ -35,7 +35,8 @@ class FakeEventSource {
 afterEach(() => {
   clearMocks();
   delete window.__VANGUARD_HUB__;
-  delete window.__VANGUARD_HUB_TOKEN__;
+  window.sessionStorage.clear();
+  window.history.replaceState(null, '', '/');
   FakeEventSource.instances = [];
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -46,12 +47,7 @@ test('T-89 mode resolution: window.__VANGUARD_HUB__ === true selects hub mode', 
   expect(isHubMode()).toBe(true);
 });
 
-test('T-89 mode resolution: VITE_VANGUARD_HUB=1 selects hub mode when the marker is absent', () => {
-  vi.stubEnv('VITE_VANGUARD_HUB', '1');
-  expect(isHubMode()).toBe(true);
-});
-
-test('T-89 mode resolution: neither signal present selects the Tauri branch', async () => {
+test('T-89 mode resolution: the marker absent selects the Tauri branch', async () => {
   expect(isHubMode()).toBe(false);
   const captured: Record<string, unknown> = {};
   mockIPC((cmd, args) => {
@@ -64,7 +60,7 @@ test('T-89 mode resolution: neither signal present selects the Tauri branch', as
 });
 
 test('T-90 hub invoke POSTs to /rpc/<cmd> with the args object and resolves result', async () => {
-  window.__VANGUARD_HUB_TOKEN__ = 'test-token';
+  window.sessionStorage.setItem('vanguard-hub-token', 'test-token');
   window.__VANGUARD_HUB__ = true;
   const calls: { url: string; init: RequestInit }[] = [];
   vi.stubGlobal(
@@ -85,6 +81,41 @@ test('T-90 hub invoke POSTs to /rpc/<cmd> with the args object and resolves resu
   expect((calls[0].init.headers as Record<string, string>)['content-type']).toBe('application/json');
   expect(JSON.parse(calls[0].init.body as string)).toEqual({ repoPath: '/repo' });
   expect(result).toEqual({ runs: [] });
+});
+
+test('the launch URL fragment token moves into sessionStorage, leaves the address bar, and is sent', async () => {
+  window.history.replaceState(null, '', '/runs?x=1#token=frag%26tok&keep=1');
+  window.sessionStorage.setItem('vanguard-hub-token', 'stale-from-old-launch');
+  window.__VANGUARD_HUB__ = true;
+  captureHubToken();
+  expect(window.sessionStorage.getItem('vanguard-hub-token')).toBe('frag&tok');
+  expect(window.location.pathname + window.location.search + window.location.hash).toBe('/runs?x=1#keep=1');
+
+  const headers: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: RequestInit) => {
+      headers.push((init.headers as Record<string, string>)['x-vanguard-hub-token']!);
+      return new Response(JSON.stringify({ result: null }), { status: 200 });
+    }),
+  );
+  window.history.replaceState(null, '', '/'); // a later reload of the bare URL keeps the token
+  await invoke('list_runs', {});
+  expect(headers).toEqual(['frag&tok']);
+});
+
+test('without a launch fragment or stored token, hub calls send an empty token', async () => {
+  window.__VANGUARD_HUB__ = true;
+  const headers: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: RequestInit) => {
+      headers.push((init.headers as Record<string, string>)['x-vanguard-hub-token']!);
+      return new Response(JSON.stringify({ result: null }), { status: 200 });
+    }),
+  );
+  await invoke('list_runs', {});
+  expect(headers).toEqual(['']);
 });
 
 test('T-91 an error body rejects with the message string', async () => {
@@ -134,7 +165,7 @@ test('T-92b a non-JSON response also rejects with a string', async () => {
 });
 
 test('T-93 one shared EventSource, handlers routed by event name', async () => {
-  window.__VANGUARD_HUB_TOKEN__ = 'a&b';
+  window.sessionStorage.setItem('vanguard-hub-token', 'a&b');
   window.__VANGUARD_HUB__ = true;
   vi.stubGlobal('EventSource', FakeEventSource);
   const aEvents: unknown[] = [];
@@ -216,9 +247,15 @@ test('T-96 a stream-reset also reaches a named subscription\'s resync sibling, n
   unlistenReset();
 });
 
-test('a permanently closed SSE stream (restarted hub, stale token) notifies onHubRestart', async () => {
+test('a permanently closed SSE stream probes before deciding: the hub\'s own token rejection notifies onHubRestart', async () => {
   window.__VANGUARD_HUB__ = true;
   vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: 'invalid hub token', kind: 'bad-request' } }), { status: 401 }),
+    ),
+  );
   const restarts: number[] = [];
   const unlistenRestart = await onHubRestart(() => restarts.push(1));
   const unlistenSub = await subscribe('event-a', () => {});
@@ -229,10 +266,67 @@ test('a permanently closed SSE stream (restarted hub, stale token) notifies onHu
 
   es.readyState = 2;
   es.emit('error', {});
+  await new Promise((r) => setTimeout(r, 0));
   expect(restarts).toEqual([1]);
 
   unlistenSub();
   unlistenRestart();
+});
+
+test('a 403 on /events (the Host check, not the hub\'s own token) notifies onHubConnectionIssue, not onHubRestart', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: 'Host not allowed', kind: 'bad-request' } }), { status: 403 }),
+    ),
+  );
+  const restarts: number[] = [];
+  const issues: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenIssue = await onHubConnectionIssue(() => issues.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  const es = FakeEventSource.instances[0]!;
+
+  es.readyState = 2;
+  es.emit('error', {});
+  await new Promise((r) => setTimeout(r, 0));
+  expect(issues).toEqual([1]);
+  expect(restarts).toEqual([]);
+
+  unlistenSub();
+  unlistenIssue();
+  unlistenRestart();
+});
+
+test('a network error probing /events (a proxy 502, connection dropped) notifies onHubConnectionIssue, not onHubRestart', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network error'); }));
+  const restarts: number[] = [];
+  const issues: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenIssue = await onHubConnectionIssue(() => issues.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  const es = FakeEventSource.instances[0]!;
+
+  es.readyState = 2;
+  es.emit('error', {});
+  await new Promise((r) => setTimeout(r, 0));
+  expect(issues).toEqual([1]);
+  expect(restarts).toEqual([]);
+
+  unlistenSub();
+  unlistenIssue();
+  unlistenRestart();
+});
+
+test('onHubConnectionIssue is a no-op outside hub mode', async () => {
+  const unlisten = await onHubConnectionIssue(() => {
+    throw new Error('must not be called under Tauri');
+  });
+  expect(() => unlisten()).not.toThrow();
 });
 
 test('a 401 from /rpc/<cmd> also notifies onHubRestart, and still rejects with the message', async () => {
