@@ -23,6 +23,17 @@ describe('comment trust', () => {
     expect(trustedComments(task)).toEqual([task.comments[0], task.comments[2]]);
     expect(trustedSpecText(task)).toBe('first\nlast');
   });
+  it('T4: an absent association fails closed once an allowlist or bot login is configured', () => {
+    expect(classifyAuthor('mallory', undefined, { allowedAuthors: ['maintainer'] })).toBe('untrusted');
+    expect(classifyAuthor('mallory', undefined, { botLogins: ['vg-bot'] })).toBe('untrusted');
+    expect(classifyAuthor('mallory', undefined, { allowedAuthors: [] })).toBe('no-association');
+    expect(classifyAuthor('Maintainer', undefined, { allowedAuthors: ['maintainer'] })).toBe('allowed');
+    expect(classifyAuthor('vg-bot', undefined, { botLogins: ['vg-bot'] })).toBe('bot');
+    expect(classifyAuthor('reporter', undefined, { allowedAuthors: ['maintainer'], issueAuthor: 'reporter' })).toBe('issue-author');
+    // Supplied associations behave as before (GitHub path).
+    for (const association of ['', 'NONE']) expect(classifyAuthor('mallory', association, { allowedAuthors: ['maintainer'] })).toBe('untrusted');
+    expect(classifyAuthor('alice', 'MEMBER', { allowedAuthors: ['maintainer'] })).toBe('association');
+  });
   it('T3: describes known and absent associations', () => {
     expect(describeIgnoredAuthor('mallory', 'NONE')).toBe('@mallory (NONE)');
     expect(describeIgnoredAuthor('mallory', '')).toBe('@mallory (none)');
