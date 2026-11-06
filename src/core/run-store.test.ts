@@ -169,12 +169,23 @@ describe('beginRun — writing', () => {
       const stored = JSON.parse(await readFile(file, 'utf8'));
       expect(stored.outputTail).toBe('visual proof execution failed: [REDACTED-INJECTED]');
       expect(stored.sha256).toBe(createHash('sha256').update(stored.outputTail).digest('hex'));
+      const metric = JSON.parse((await readFile(join(runsRoot(repo), 'metrics.jsonl'), 'utf8')).trim());
+      expect(metric.sha256).toBe(stored.sha256);
 
       const ranFile = await writer.writeVisualProof({ ...vpResult, exitCode: 1, passed: false, outputTail: tail });
       const ran = JSON.parse(await readFile(ranFile, 'utf8'));
       expect(ran.outputTail).not.toContain(refresh);
       expect(ran.sha256).toBe(vpResult.sha256); // over the full output, not the tail: unchanged
     });
+
+    it('withholds a stage diff that carries an injected value no pattern recognizes', () =>
+      withWorktree(async (wt) => {
+        const diff = `diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+const k = '${refresh}';\n`;
+        await beginRun(repo, 'TES-1', TS).writeStages([{ name: 'implementer', result: { ...result, worktreePath: wt, diff } }]);
+        const record = JSON.parse(await readFile(join(runsRoot(repo), 'TES-1', `${PREFIX}-implementer.json`), 'utf8'));
+        expect(record.diffOmitted).toBe('secret-scan');
+        expect(await recordFiles('TES-1')).toEqual([`${PREFIX}-implementer.json`]);
+      }));
 
     it('a custom keyEnv is only known when the run names it (control)', async () => {
       await beginRun(repo, 'TES-1', TS).writeStages([{ name: 'reviewer', result: { ...result, diff: '', finalText: `key ${custom}` } }]);

@@ -7,6 +7,8 @@ import { commentLinearIssue } from '../tasks/linear-cli.js';
 import { commentPullRequest, postPullRequestReview } from '../runners/pr-review.js';
 import { postMergeRequestNote } from '../runners/mr-review.js';
 import { replyAndResolveThread } from '../runners/pr-feedback.js';
+import { renderStepSummary } from './step-summary.js';
+import { selectAgents } from '../agents/registry.js';
 
 // Opaque like a Codex refresh_token: no SECRET_PATTERNS entry matches it, only the exact-value pass can.
 const refresh = 'rt_DUMMY8kQ2wZx7Pm4Nv1Lc9Hb3Jt6Ry0Ed5Sa';
@@ -77,5 +79,35 @@ describe('every transport that posts agent text', () => {
     expect(argv).not.toContain(refresh);
     expect(argv).not.toContain(ghToken);
     expect(argv).toContain('Review: looks fine.');
+  });
+});
+
+describe('the job step summary', () => {
+  it('masks the error and note lines', () => {
+    const out = renderStepSummary({
+      taskId: 'gh-1', flow: 'default', provider: 'codex', outcomes: [], exit: 'error',
+      error: `AgentError: Agent exited without a result: ${agentText}`, notes: [`echo ${refresh}`],
+    });
+    expect(out).toContain('- Error: AgentError: Agent exited without a result');
+    expect(out).not.toContain(refresh);
+    expect(out).not.toContain(ghToken);
+  });
+});
+
+describe('a custom provider keyEnv resolved at run start', () => {
+  const customKey = 'acme-opaque-key-5532719';
+
+  it('is redacted from a posted comment once selectAgents has run (no run config at the transport)', async () => {
+    vi.stubEnv('ACME_PUBLISH_KEY', customKey);
+    const { calls, run } = recorder();
+    await commentGithubIssue('o/r', '#3', `key ${customKey}`, run);
+    expect(JSON.stringify(calls)).toContain(customKey); // control: unknown before the run selects its agents
+
+    const spec = { name: 'acme', baseUrl: 'https://llm.example.com/api', keyEnv: 'ACME_PUBLISH_KEY' };
+    selectAgents({ provider: 'acme', customProviders: [{ index: 0, name: 'acme', spec }] }, { ACME_PUBLISH_KEY: customKey });
+    const after = recorder();
+    await commentGithubIssue('o/r', '#3', `key ${customKey}`, after.run);
+    expect(JSON.stringify(after.calls)).not.toContain(customKey);
+    expect(formatFailureComment('Vanguard run failed', new Error(customKey))).not.toContain(customKey);
   });
 });

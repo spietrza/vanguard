@@ -1,5 +1,6 @@
 import { appendFile } from 'node:fs/promises';
 import { stageMetric } from './run-metric.js';
+import { redactForPublish } from './secret-scan.js';
 import type { SummaryOutcome } from './run-summary.js';
 
 /** How a run ended, as the job summary states it. */
@@ -45,8 +46,9 @@ export function renderStepSummary(summary: StepSummary): string {
     summary.prUrl !== undefined ? `- PR: ${summary.prUrl}` : undefined,
     summary.verdict !== undefined ? `- Verdict: ${summary.verdict}` : undefined,
     summary.risk !== undefined ? `- Risk: ${summary.risk}` : undefined,
-    ...(summary.notes ?? []).map((note) => `- Note: ${note}`),
-    summary.error !== undefined ? `- Error: ${summary.error}` : undefined,
+    ...(summary.notes ?? []).map((note) => `- Note: ${redactForPublish(note)}`),
+    // The job summary is public on a public repo, and a thrown agent error embeds raw CLI output.
+    summary.error !== undefined ? `- Error: ${redactForPublish(summary.error)}` : undefined,
   ].filter((line): line is string => line !== undefined);
   return [
     `### Vanguard run \`${summary.taskId}\` — ${summary.exit}`,

@@ -10,7 +10,7 @@ import { BadRequestError } from '../sidecar/sidecar.js';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import { exportRunTrace } from './otlp-sink.js';
-import { injectedSecretValues, redactForPublish, scanForSecrets } from './secret-scan.js';
+import { injectedSecretValues, redactForPublish, scanForInjectedSecrets, scanForSecrets } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
 import type { DecisionProbeResult } from './decision-probe.js';
@@ -360,11 +360,11 @@ async function writeRecord(root: string, taskId: string, timestamp: string, resu
   //  - 'secret-blocked': the caller's publish gate fired (opts.omitDiff).
   //  - 'secret-scan': a stage's diff is the worktree at the end of THAT stage, while the gate scans the
   //    final diff only — a secret the implementer wrote and the simplifier removed passes the gate yet
-  //    sits in the implementer's record, so every stage diff meets the same scan first. Same residual
-  //    gap as the gate: scanForSecrets exempts test paths (isTestPath).
+  //    sits in the implementer's record, so every stage diff meets the same scans first: the patterns
+  //    (which exempt test paths, isTestPath) and the exact-value check on injected credentials.
   const diffOmitted: 'secret-blocked' | 'secret-scan' | undefined = opts.omitDiff
     ? 'secret-blocked'
-    : diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0
+    : diff !== undefined && diff !== '' && (scanForSecrets(diff).length > 0 || scanForInjectedSecrets(diff, opts.secretValues).length > 0)
       ? 'secret-scan'
       : undefined;
   // Free text is masked before it reaches disk (the record may leave the job as a CI artifact): injected
@@ -487,7 +487,7 @@ export function beginRun(
         taskId,
         passed: result.passed,
         exitCode: result.exitCode,
-        sha256: result.sha256,
+        sha256: stored.sha256,
         artifacts: result.artifacts.length,
       };
       await appendFile(join(root, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);

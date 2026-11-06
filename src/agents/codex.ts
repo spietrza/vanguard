@@ -1,5 +1,5 @@
 import { AgentError } from '../core/errors.js';
-import { redactTokens } from '../core/secret-scan.js';
+import { redactForPublish } from '../core/secret-scan.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './provider.js';
 import { shellQuote } from './shell.js';
 
@@ -120,13 +120,13 @@ export class CodexProvider implements AgentProvider {
     // in subscription mode auth.json (JWTs + Bearer tokens) lives in the sandbox, and this string is both
     // dumped to the run log AND posted as a public issue comment by the runner — a token must never ride along.
     const detail = (): string => {
-      const err = redactTokens(res.stderr.trim());
-      const out = redactTokens(res.stdout.trim()).slice(-1500);
+      const err = redactForPublish(res.stderr.trim());
+      const out = redactForPublish(res.stdout.trim()).slice(-1500);
       return [err !== '' ? `stderr: ${err}` : '', out !== '' ? `stdout: ${out}` : ''].filter(Boolean).join(' | ') || '(no output)';
     };
     if (!parsedAny || !sawTurnCompleted) {
       const reason = parsedAny ? 'exited without a result' : 'produced no parseable output';
-      console.error(`codex ${reason} (exit ${res.exitCode})\n--- codex stdout ---\n${redactTokens(res.stdout)}\n--- codex stderr ---\n${redactTokens(res.stderr)}`);
+      console.error(`codex ${reason} (exit ${res.exitCode})\n--- codex stdout ---\n${redactForPublish(res.stdout)}\n--- codex stderr ---\n${redactForPublish(res.stderr)}`);
       throw new AgentError(`Agent ${reason} (exit ${res.exitCode}): ${detail()}`);
     }
 

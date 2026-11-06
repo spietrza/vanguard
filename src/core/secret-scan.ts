@@ -242,13 +242,26 @@ const INJECTED_SECRET_ENV_VARS = [
 ] as const;
 
 /**
+ * Env var names of credentials resolved at run start that the static list cannot know (a custom
+ * provider's `keyEnv`). Process-wide and append-only: every default injectedSecretValues() call — the
+ * comment transports, failure comments, step summaries — covers them without threading run config.
+ * Only names live here; values are still read from the env at each call.
+ */
+const registeredSecretEnvVars = new Set<string>();
+
+/** Register a run's extra credential env var names (see registeredSecretEnvVars). Called from selectAgents. */
+export function registerInjectedSecretEnvVars(names: readonly string[]): void {
+  for (const name of names) registeredSecretEnvVars.add(name);
+}
+
+/**
  * Collect the secret values Vanguard itself injected into this run's sandbox (or used to push on its
  * behalf), from the env vars it reads to build them plus any `extraEnvVars` the caller resolved for
  * this run (a custom provider's configured `keyEnv`). Exported so a caller snapshots process.env once;
  * tests pass explicit values straight to scanForInjectedSecrets instead of mutating the environment.
  */
 export function injectedSecretValues(env: NodeJS.ProcessEnv = process.env, extraEnvVars: readonly string[] = []): string[] {
-  const values = [...INJECTED_SECRET_ENV_VARS, ...extraEnvVars]
+  const values = [...INJECTED_SECRET_ENV_VARS, ...registeredSecretEnvVars, ...extraEnvVars]
     .map((name) => env[name])
     .filter((v): v is string => v !== undefined && isPlausibleInjectedSecret(v));
   // Codex writes auth.json; agents can copy individual credentials out of it.
