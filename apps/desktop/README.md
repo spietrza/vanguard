@@ -49,27 +49,25 @@ no URL routing needed.
 This same frontend also runs with no Tauri runtime at all, served by `vanguard hub` over plain
 HTTP/SSE (see `../../docs/hub.md`). `src/transport.ts` is the seam: every `invoke`/`listen` call goes
 through `invoke()`/`subscribe()`, which pick Tauri's IPC or the hub's `POST /rpc/<cmd>` + `/events` SSE
-stream, depending on which of these is present, in order:
+stream depending on `window.__VANGUARD_HUB__ === true` — the marker the hub injects into `index.html`
+itself; its absence selects Tauri, the branch `vitest` and `dev/mockBackend.ts` always exercise.
 
-1. `window.__VANGUARD_HUB__ === true` — the hub injects this marker into `index.html` itself.
-2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — selects the hub branch instead of the Tauri/mock one.
-3. Otherwise, Tauri — the branch `vitest` and `dev/mockBackend.ts` always exercise.
-
-Alongside the marker, the hub injects a **per-launch token** into `index.html`
-(`window.__VANGUARD_HUB_TOKEN__`), which `transport.ts` sends on every `/rpc/<cmd>` and on `/events`.
-The hub requires it, so **the page must be served by the hub** — only then does it carry a token.
-That makes `VITE_VANGUARD_HUB=1` on Vite's own dev server (`http://localhost:1420`) a dead end: its
-page carries no token, and its same-origin `/rpc/<cmd>` goes to the dev server (which proxies nothing
-to the hub) rather than to a hub that would accept one. There is no escape hatch; to see a change
-against a real hub, rebuild and let the hub serve it (first recipe below). The token is minted
-per launch, so restarting the hub also invalidates an already-open page — the UI says so, and a
-reload picks up the new one.
+The hub requires a **per-launch token** on every `/rpc/<cmd>` and on `/events`. It is never part of
+`index.html`: the hub prints and opens a launch URL that carries it in the fragment
+(`http://127.0.0.1:7777/#token=…`, never sent to the server). `transport.ts` moves it into
+`sessionStorage` (key `vanguard-hub-token`), strips it from the address bar, and sends it from there
+— so a reload keeps working, but a new tab opened on the bare URL has no token until it is given the
+launch URL. **The page must be served by the hub**: `VITE_VANGUARD_HUB=1` on Vite's own dev server
+(`http://localhost:1420`) is a dead end, since its same-origin `/rpc/<cmd>` goes to the dev server
+(which proxies nothing to the hub). There is no escape hatch; to see a change against a real hub,
+rebuild and let the hub serve it (first recipe below). The token is minted per launch, so restarting
+the hub invalidates an already-open page — the UI says so; open the new launch URL to reconnect.
 
 **Build the UI and run the hub against a real repo:**
 
 ```bash
 pnpm --dir apps/desktop build          # emits apps/desktop/dist, which the hub serves
-vanguard hub --repo /path/to/your/repo # from the repo root; prints the URL it opened
+vanguard hub --repo /path/to/your/repo # from the repo root; prints the launch URL it opened
 ```
 
 Reaching the hub under a hostname other than loopback or an IP literal needs that Host allowed —
@@ -142,6 +140,12 @@ shapes (kept decoupled from Vanguard's build, per the design spec §4).
 - **Credentials** are inherited from the operator environment; the app never stores or brokers them
   (design spec §12). A *bundled* `.app` launched from Finder has a minimal env — run from a terminal for
   now.
+- **Task board "New Run" always uses the LLM proxy.** It goes through `sidecar.rs`'s `vanguard
+  __sidecar` subprocess, the same `productionDeps()` dispatch the hub uses — see
+  [Runs always use the LLM proxy](../../docs/hub.md#runs-always-use-the-llm-proxy) for which
+  credentials that covers, which don't, and what a failed proxy sidecar looks like. **Launch** below is
+  a different path and is not covered: it is an ordinary CLI invocation, so the CLI's own opt-in
+  `--llm-proxy` (off by default) applies instead.
 - **Launch command** is operator-supplied (a local run launcher, like a terminal) — spawned via `sh -c`
   in the project dir. Not untrusted input.
 - **Spec / remote** fetches require an authed `gh` / `linear` on `PATH`; they fail gracefully otherwise.

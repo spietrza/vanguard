@@ -77,7 +77,12 @@ export async function startLlmProxy(opts: {
     });
     return { url: `http://${name}:${PROXY_PORT}`, nonce, host: name, destroy: sidecar.destroy };
   } catch (cause) {
-    throw new SandboxError(`Failed to start llm proxy ${id}`, { cause });
+    // The sidecar runs the sandbox image (startSidecar's default), so a missing/stale build is the
+    // common cause — name it instead of leaving a bare container id for the user to puzzle over.
+    throw new SandboxError(
+      `Failed to start llm proxy ${id}: rebuild the sandbox image (docker/build.sh builds vanguard-sandbox:latest), or check VANGUARD_SANDBOX_IMAGE if set.`,
+      { cause },
+    );
   }
 }
 
