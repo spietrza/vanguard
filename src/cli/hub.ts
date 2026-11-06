@@ -15,6 +15,18 @@ function parseHostList(raw: string | undefined): string[] {
   return (raw ?? '').split(',').map((h) => h.trim()).filter(Boolean);
 }
 
+/** `allowedHosts` is matched against the `Host` header exactly (case-insensitive `host[:port]`), so a
+ * URL or a glob would simply never match — refuse it at startup instead of serving 403s the operator
+ * cannot explain. A scheme (`https://hub.example`) and a path both carry `/`. */
+function assertPlainHosts(hosts: readonly string[]): void {
+  const invalid = hosts.find((host) => /[/*]/.test(host));
+  if (invalid !== undefined) {
+    throw new Error(
+      `Vanguard Hub: invalid allowed Host "${invalid}" — --allowed-host/VANGUARD_HUB_ALLOWED_HOSTS take a bare host[:port], with no scheme, path or wildcard.`,
+    );
+  }
+}
+
 /** `src/cli/hub.ts` -> package root, whether running under tsx (src/) or built (dist/) — both
  * mirror the same two-levels-up depth from rootDir/outDir. */
 function pkgRoot(): string {
@@ -43,6 +55,9 @@ const NO_AUTH_WARNING = [
 ].join('\n');
 
 export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Promise<void> {
+  const allowedHosts = [...(command.allowedHosts ?? []), ...parseHostList(process.env.VANGUARD_HUB_ALLOWED_HOSTS)];
+  assertPlainHosts(allowedHosts);
+
   const uiDir = resolve(command.uiDir ?? process.env.VANGUARD_HUB_UI_DIR ?? join(pkgRoot(), 'apps/desktop/dist'));
   await assertUiDirBuilt(uiDir);
 
@@ -69,7 +84,7 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
 
   const hub = createHubServer({
     uiDir,
-    allowedHosts: [...(command.allowedHosts ?? []), ...parseHostList(process.env.VANGUARD_HUB_ALLOWED_HOSTS)],
+    allowedHosts,
     configDir,
     browseRoot: process.env.VANGUARD_HUB_BROWSE_ROOT ?? homedir(),
     ...(process.env.VANGUARD_HUB_CLONE_HOSTS ? { cloneHosts: parseHostList(process.env.VANGUARD_HUB_CLONE_HOSTS) } : {}),

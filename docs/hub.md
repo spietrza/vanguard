@@ -47,12 +47,16 @@ This opens a browser at the printed URL.
    that host, so it needs Docker and the token there. Local mode has no login of its own: never
    publish the port. `VANGUARD_HUB_ALLOW_ADD=1` enables Add project and Clone repository on a
    non-loopback bind (see [Modes](#modes) and [Coolify / Docker Compose](#coolify--docker-compose)).
+   Reaching it under a hostname other than loopback needs that hostname allowed:
+   `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (or `--allowed-host hub.example.com`).
 
 ## Modes
 
 - **Local mode** — no authentication, binds `127.0.0.1` by default. Intended for running on your own
   machine, reachable only from itself.
-- **Container mode** — binds `0.0.0.0` because Docker port-mapping requires it.
+- **Container mode** — binds `0.0.0.0` because Docker port-mapping requires it. Set
+  `VANGUARD_HUB_ALLOWED_HOSTS=hub.example.com` (every hostname the browser uses, including a
+  non-default port) — only loopback Hosts are allowed by default, so any other `Host` gets a 403.
 
 Local mode has no authentication — on a VPS put it behind Tailscale or an authenticating reverse proxy,
 never a published port.
@@ -71,11 +75,13 @@ commands, `false` stays `false`); an error answers `400`/`404`/`500 {"error": {"
 `kind` = `bad-request` or `internal`. `apps/desktop/src/transport.ts` unwraps `result` and rejects with
 `error.message`, so both sides must keep this envelope.
 
-**`src/hub-wire.ts` is the single source of truth for this envelope, the SSE frame shape, and the hub
-marker** — a zero-import module copied verbatim into `apps/desktop/src/hub-wire.ts` by `pnpm gen:wire`
+**`src/hub-wire.ts` is the single source of truth for this envelope, the SSE frame shape, the hub
+marker, and the token's header/query-parameter names** — a zero-import module copied verbatim into
+`apps/desktop/src/hub-wire.ts` by `pnpm gen:wire`
 (drift caught by `src/wire.test.ts`). The server (`src/hub/server.ts`, `events.ts`, `static.ts`) and the
 browser (`apps/desktop/src/transport.ts`) both call its `encodeResult`/`encodeError`/`decodeResponse`/
-`encodeEvent`/`decodeEvent`/`HUB_MARKER` instead of hand-rolling either side of the wire. A reconnecting
+`encodeEvent`/`decodeEvent`/`HUB_MARKER`/`HUB_TOKEN_HEADER`/`HUB_TOKEN_QUERY_PARAM` instead of
+hand-rolling either side of the wire. A reconnecting
 SSE client whose `Last-Event-ID` gap exceeds the replay ring gets a `stream-reset` frame instead of a
 replay; `transport.ts` resyncs by re-running its snapshot fetches rather than trusting the stream alone.
 
@@ -145,6 +151,7 @@ services:
     environment:
       GH_TOKEN: ${GH_TOKEN}
       VANGUARD_MAX_SANDBOXES: "1"
+      VANGUARD_HUB_ALLOWED_HOSTS: hub.example.com # every Host the browser uses; loopback only by default
 
 volumes:
   vanguard-hub-config:
@@ -211,4 +218,11 @@ prints the no-auth warning above and disables `add_project`/`browse_dirs`/`clone
 `VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
 and the project file watchers.
 
-The SPA receives a fresh per-launch token. RPC requests require `x-vanguard-hub-token`; SSE requests require the `token` query parameter. Host checks also protect the SPA response against DNS rebinding. This token is available to anyone who can fetch the SPA and does not replace authentication at the reverse proxy.
+The SPA receives a fresh per-launch token. RPC requests require `x-vanguard-hub-token`; SSE requests
+require the `token` query parameter. Host checks also protect the SPA response against DNS rebinding.
+The token stops a page on another origin from driving the hub; it is not authentication — anyone who
+can fetch `GET /` (any local process, anyone the proxy lets through) reads it out of the HTML, so it
+does not replace authentication at the reverse proxy. Because `/events` carries it as a query
+parameter, it lands in reverse-proxy access logs; it is regenerated on every hub launch, so a logged
+value stops working once the hub restarts (and an already-open page must be reloaded to pick up the
+new one).

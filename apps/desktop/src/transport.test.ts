@@ -1,6 +1,6 @@
 import { test, expect, afterEach, vi } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { invoke, isHubMode, subscribe, onStreamReset } from './transport';
+import { invoke, isHubMode, subscribe, onStreamReset, onHubRestart } from './transport';
 
 /** Minimal fake EventSource — jsdom doesn't implement one. Tracks every instance so a test can
  * assert how many were actually constructed (the "one shared EventSource" guarantee). */
@@ -8,6 +8,7 @@ class FakeEventSource {
   static instances: FakeEventSource[] = [];
   readonly listeners = new Map<string, Set<(ev: MessageEvent) => void>>();
   closed = false;
+  readyState = 1; // OPEN; 2 is CLOSED — the browser gave up reconnecting (e.g. a 401 on /events)
   constructor(public url: string) {
     FakeEventSource.instances.push(this);
   }
@@ -213,6 +214,49 @@ test('T-96 a stream-reset also reaches a named subscription\'s resync sibling, n
 
   unlistenChanged();
   unlistenReset();
+});
+
+test('a permanently closed SSE stream (restarted hub, stale token) notifies onHubRestart', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  const restarts: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  const es = FakeEventSource.instances[0]!;
+
+  es.emit('error', {}); // still OPEN: a transient drop the browser retries on its own
+  expect(restarts).toEqual([]);
+
+  es.readyState = 2;
+  es.emit('error', {});
+  expect(restarts).toEqual([1]);
+
+  unlistenSub();
+  unlistenRestart();
+});
+
+test('a 401 from /rpc/<cmd> also notifies onHubRestart, and still rejects with the message', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: 'invalid hub token', kind: 'bad-request' } }), { status: 401 }),
+    ),
+  );
+  const restarts: number[] = [];
+  const unlisten = await onHubRestart(() => restarts.push(1));
+
+  await expect(invoke('list_runs', {})).rejects.toBe('invalid hub token');
+  expect(restarts).toEqual([1]);
+
+  unlisten();
+});
+
+test('onHubRestart is a no-op outside hub mode', async () => {
+  const unlisten = await onHubRestart(() => {
+    throw new Error('must not be called under Tauri');
+  });
+  expect(() => unlisten()).not.toThrow();
 });
 
 test('T-97 onStreamReset is a no-op outside hub mode', async () => {

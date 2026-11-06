@@ -82,6 +82,15 @@ describe('hubCommand', () => {
     }
   });
 
+  test('an allowed Host carrying a scheme, a path or a wildcard is a startup error', async () => {
+    for (const bad of ['https://hub.example', 'hub.example/ui', '*.example']) {
+      await expect(hubCommand(command({ allowedHosts: [bad] }))).rejects.toThrow(/bare host\[:port\]/);
+      process.env.VANGUARD_HUB_ALLOWED_HOSTS = `ok.example,${bad}`;
+      await expect(hubCommand(command())).rejects.toThrow(/bare host\[:port\]/);
+      delete process.env.VANGUARD_HUB_ALLOWED_HOSTS;
+    }
+  });
+
   test('a missing/unbuilt uiDir fails loudly, naming the build command', async () => {
     const emptyUiDir = await mkdtemp(join(tmpdir(), 'vanguard-hub-cli-empty-'));
     await expect(hubCommand(command({ uiDir: emptyUiDir }))).rejects.toThrow(/pnpm --dir apps\/desktop build/);

@@ -49,6 +49,23 @@ describe('injectHubMarker', () => {
     expect(out).toBe(html.replace('<head>', `<head>${marker}`));
   });
 
+  test('injects the per-launch token script after the marker when one is passed', () => {
+    const html = '<!doctype html><html><head><title>x</title></head><body>hi</body></html>';
+    const out = injectHubMarker(html, 'de:ad"beef');
+    expect(out).toBe(
+      html.replace(
+        '<head>',
+        '<head><script>window.__VANGUARD_HUB__=true</script><script>window.__VANGUARD_HUB_TOKEN__="de:ad\\"beef"</script>',
+      ),
+    );
+  });
+
+  test('omits the token script entirely when no token is passed (the CLI build check)', () => {
+    const out = injectHubMarker('<html><head></head><body></body></html>');
+    expect(out).not.toContain('__VANGUARD_HUB_TOKEN__');
+    expect(out).toContain('__VANGUARD_HUB__');
+  });
+
   test('throws when there is no <head> to inject after', () => {
     expect(() => injectHubMarker('<html><body>no head here</body></html>')).toThrow(/<head>/);
   });

@@ -25,18 +25,46 @@ export function canUseFleet(): boolean {
   return !isHubMode();
 }
 
+/** A hub restart mints a fresh per-launch token (src/hub/server.ts), so the one this page was served
+ * with stops working: `/rpc/*` answers 401 and `/events` answers 401, which makes the browser close
+ * the `EventSource` for good instead of reconnecting. Nothing the page can do fixes that — only a
+ * reload picks up the new token — so both signals land here and the UI says so (App.tsx) rather than
+ * going quietly stale. */
+const restartHandlers = new Set<() => void>();
+const EVENT_SOURCE_CLOSED = 2;
+
+/** The token `src/hub/static.ts` embedded in this page, or '' when there is none — the hub answers
+ * 401 either way, which is the signal below. */
+function hubToken(): string {
+  return window.__VANGUARD_HUB_TOKEN__ ?? '';
+}
+
+function notifyHubRestarted(): void {
+  for (const h of restartHandlers) h();
+}
+
+/** Register a callback for "this page's hub token is dead, reload". No-op under Tauri. */
+export function onHubRestart(handler: () => void): Promise<UnlistenFn> {
+  if (!isHubMode()) return Promise.resolve(() => {});
+  restartHandlers.add(handler);
+  return Promise.resolve(() => {
+    restartHandlers.delete(handler);
+  });
+}
+
 async function hubInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/rpc/${cmd}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', [HUB_TOKEN_HEADER]: window.__VANGUARD_HUB_TOKEN__ ?? '' },
+      headers: { 'content-type': 'application/json', [HUB_TOKEN_HEADER]: hubToken() },
       body: JSON.stringify(args ?? {}),
     });
   } catch (err) {
     // Network failure (server unreachable, CORS, etc.) — reject with a string, like Tauri's Err(String).
     throw err instanceof Error ? err.message : String(err);
   }
+  if (response.status === 401) notifyHubRestarted();
   let body: unknown;
   try {
     body = await response.json();
@@ -50,8 +78,8 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
   return isHubMode() ? hubInvoke<T>(cmd, args) : tauriInvoke<T>(cmd, args);
 }
 
-/** One lazily created `EventSource('/events')` shared by every `subscribe()` call, routed by event
- * name. Module-level so every caller — regardless of which component mounted first — shares it. */
+/** One lazily created `EventSource('/events?token=…')` shared by every `subscribe()` call, routed by
+ * event name. Module-level so every caller — regardless of which component mounted first — shares it. */
 let hubSource: EventSource | undefined;
 interface HubSubscription {
   listener: (ev: MessageEvent) => void;
@@ -68,11 +96,17 @@ const resyncHandlers = new Set<() => void>();
  * once per instance, independent of which named subscriptions come and go. */
 function ensureHubSource(): EventSource {
   if (hubSource) return hubSource;
-  hubSource = new EventSource(`/events?${HUB_TOKEN_QUERY_PARAM}=${encodeURIComponent(window.__VANGUARD_HUB_TOKEN__ ?? '')}`);
-  hubSource.addEventListener(STREAM_RESET_EVENT, () => {
+  const source = new EventSource(`/events?${HUB_TOKEN_QUERY_PARAM}=${encodeURIComponent(hubToken())}`);
+  source.addEventListener(STREAM_RESET_EVENT, () => {
     for (const h of resyncHandlers) h();
   });
-  return hubSource;
+  // An `error` on a live stream is a transient drop the browser retries on its own; CLOSED means it
+  // gave up, which is what the restarted hub's 401 on `/events` looks like from here.
+  source.addEventListener('error', () => {
+    if (source.readyState === EVENT_SOURCE_CLOSED) notifyHubRestarted();
+  });
+  hubSource = source;
+  return source;
 }
 
 /** Close the shared `EventSource` once nothing — named subscription or resync callback — still needs it. */

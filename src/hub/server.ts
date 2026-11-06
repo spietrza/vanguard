@@ -49,7 +49,11 @@ export interface HubServer {
   readonly eventBus: EventBus;
   readonly allowlist: ProjectAllowlist;
   /** Per-launch secret `/rpc/*` and `/events` require. Never logged, never returned by
-   * `/healthz` — only `src/hub/static.ts` embeds it, in the SPA response, for the browser to read back. */
+   * `/healthz` — only `src/hub/static.ts` embeds it, in the SPA response, for the browser to read back.
+   * The boundary it draws: a browser page on another origin cannot read it (that's what the
+   * same-origin and Host checks are for), so it cannot drive the hub. It is NOT authentication —
+   * any other process that can reach the port gets it from `GET /` — so a non-loopback bind still
+   * needs Tailscale or an authenticating reverse proxy in front (docs/hub.md). */
   readonly token: string;
   listen(port: number, host: string): Promise<void>;
   /** Graceful shutdown: ends every SSE client, stops project watchers, then closes the listener. */
@@ -62,6 +66,10 @@ function tokenOk(candidate: string | null | undefined, token: string): boolean {
   const expected = Buffer.from(token);
   return bytes.length === expected.length && timingSafeEqual(bytes, expected);
 }
+
+/** Names the fix: the default allowlist is loopback-only, so a reverse-proxy or container deployment
+ * reached under its own hostname has to opt that Host in (docs/hub.md). */
+const HOST_NOT_ALLOWED = 'Host not allowed — pass --allowed-host <host[:port]> or set VANGUARD_HUB_ALLOWED_HOSTS';
 
 function notFound(res: ServerResponse): void {
   jsonError(res, 404, 'not found', 'bad-request');
@@ -188,7 +196,7 @@ async function handleRequest(
     ...(opts.allowedHosts ?? []).map((host) => host.toLowerCase()),
   ]);
   if (!req.headers.host || !hosts.has(req.headers.host.toLowerCase())) {
-    jsonError(res, 403, 'Host not allowed', 'bad-request');
+    jsonError(res, 403, HOST_NOT_ALLOWED, 'bad-request');
     return;
   }
   const url = new URL(req.url ?? '/', 'http://hub.local');
