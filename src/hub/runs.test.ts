@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -153,6 +153,28 @@ describe('readRunDetail', () => {
     await expect(readRunDetail(runsRoot, '../task-7', 'x')).rejects.toBeInstanceOf(BadRequestError);
     await expect(readRunDetail(runsRoot, 'a/b', 'x')).rejects.toBeInstanceOf(BadRequestError);
     await expect(readRunDetail(runsRoot, '', 'x')).rejects.toBeInstanceOf(BadRequestError);
+  });
+
+  it('T-12 does not follow symlinked proof, record files or task directories', async () => {
+    const runsRoot = await fixture(tmp);
+    const dir = join(runsRoot, 'task-7');
+    const outside = join(tmp, 'outside');
+    await mkdir(outside);
+    const proofPath = join(dir, '2026-07-06T19-12-02-123Z.proof.json');
+    await rm(proofPath);
+    await writeFile(join(outside, 'proof.json'), JSON.stringify({ command: 'leak', exitCode: 0, passed: true }));
+    await symlink(join(outside, 'proof.json'), proofPath);
+    const reviewPath = join(dir, '2026-07-06T19-12-02-123Z-review.json');
+    await writeFile(join(outside, 'review.json'), await readFile(reviewPath, 'utf8'));
+    await rm(reviewPath);
+    await symlink(join(outside, 'review.json'), reviewPath);
+
+    const detail = await readRunDetail(runsRoot, 'task-7', '2026-07-06T19:12:02.123Z');
+    expect(detail.proof).toBeUndefined();
+    expect(detail.stages.map((s) => s.record.stage)).toEqual(['implement']);
+
+    await symlink(dir, join(runsRoot, 'task-8'));
+    await expect(readRunDetail(runsRoot, 'task-8', '2026-07-06T19:12:02.123Z')).rejects.toBeInstanceOf(BadRequestError);
   });
 
   it('T-11 falls back to the closest earlier proof.json (gh-477: proof stamped ~7s before the stage records)', async () => {

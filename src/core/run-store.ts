@@ -2,7 +2,8 @@
 // Both readers that used to re-derive this format now forward here — src/hub/runs.ts (thin
 // re-export shim) and the Tauri desktop app (apps/desktop/src-tauri/src/runs.rs), which forwards
 // `list_runs`/`read_run` over the sidecar query pipe the way `list_tasks` already does.
-import { mkdir, writeFile, appendFile, unlink, readdir, readFile, lstat, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdir, writeFile, appendFile, unlink, readdir, lstat, open, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
 import { hostGitArgs } from '../worktree/host-git.js';
@@ -47,8 +48,10 @@ export function isRunRecordFile(name: string): boolean {
 }
 
 /**
- * Read a file's text but refuse a symlinked leaf: a repo under inspection could plant a
- * `.diff`/`.transcript.log` pointing at an arbitrary file and have its contents shown in the UI.
+ * Read a file's text but refuse a symlinked leaf or anything that is not a regular file: a repo
+ * under inspection could plant a `.diff`/`.transcript.log`/`.proof.json` pointing at an arbitrary
+ * file and have its contents shown in the UI. The lstat gives the clear error; opening with
+ * O_NOFOLLOW (where the platform has it) and checking the opened handle closes the swap-in race.
  * Guards the leaf symlink only (mirrors the Rust implementation's caveat).
  */
 export async function readTextNoSymlink(path: string): Promise<string> {
@@ -56,7 +59,13 @@ export async function readTextNoSymlink(path: string): Promise<string> {
   if (info.isSymbolicLink()) {
     throw new Error('refusing to read a symlinked file');
   }
-  return readFile(path, 'utf8');
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error('refusing to read a non-regular file');
+    return await handle.readFile('utf8');
+  } finally {
+    await handle.close();
+  }
 }
 
 /** 32-bit FNV-1a over a string; used only to fold file name+mtime into a stable fingerprint. */
@@ -144,7 +153,7 @@ function findClosestProofFile(fileNames: readonly string[], suffix: string, stag
 /** Best-effort parse of a run record file; returns undefined on any read or JSON error. */
 async function tryReadRecord(path: string): Promise<RunRecord | undefined> {
   try {
-    const contents = await readFile(path, 'utf8');
+    const contents = await readTextNoSymlink(path);
     return JSON.parse(contents) as RunRecord;
   } catch {
     return undefined;
@@ -235,6 +244,9 @@ export async function readRun(root: string, taskId: string, timestamp: string): 
     throw new BadRequestError('invalid task id');
   }
   const taskDir = join(root, taskId);
+  if ((await lstat(taskDir)).isSymbolicLink()) {
+    throw new BadRequestError('refusing to read a symlinked task directory');
+  }
   const stages: StageDetail[] = [];
 
   const files = await readdir(taskDir, { withFileTypes: true });
@@ -270,7 +282,7 @@ export async function readRun(root: string, taskId: string, timestamp: string): 
   const readProofFile = async <T>(suffix: string): Promise<T | undefined> => {
     const exactPath = join(taskDir, `${sanitizeTimestamp(timestamp)}${suffix}`);
     try {
-      return JSON.parse(await readFile(exactPath, 'utf8')) as T;
+      return JSON.parse(await readTextNoSymlink(exactPath)) as T;
     } catch {
       // fall through to the closest-preceding fallback below
     }
@@ -278,7 +290,7 @@ export async function readRun(root: string, taskId: string, timestamp: string): 
     const fallbackName = findClosestProofFile(fileNames, suffix, stageMs);
     if (fallbackName === undefined) return undefined;
     try {
-      return JSON.parse(await readFile(join(taskDir, fallbackName), 'utf8')) as T;
+      return JSON.parse(await readTextNoSymlink(join(taskDir, fallbackName))) as T;
     } catch {
       return undefined;
     }
