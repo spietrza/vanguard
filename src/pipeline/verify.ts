@@ -118,6 +118,10 @@ export function renderVerificationFeedback(result: VerificationResult): string {
 /** Markdown Proof of Work block for the PR body. */
 export function proofBlock(result: VerificationResult): string {
   const status = result.passed ? 'PASS' : 'FAIL';
+  // Fence-safe: output with a ``` line would close a 3-backtick block and inject PR-body markdown.
+  // Use a fence one backtick longer than the longest run in the output (same as inlineAttachments).
+  const longest = Math.max(0, ...[...result.outputTail.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
   return [
     `## Proof of work: ${status}`,
     '',
@@ -127,9 +131,9 @@ export function proofBlock(result: VerificationResult): string {
     '',
     '<details><summary>output tail</summary>',
     '',
-    '```',
+    fence,
     result.outputTail,
-    '```',
+    fence,
     '',
     '</details>',
   ].join('\n');
