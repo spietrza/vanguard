@@ -1,5 +1,46 @@
 import { describe, it, expect } from 'vitest';
-import { runCommand, watchCommand, runPresets, DEFAULT_PROVIDER } from './command';
+import { runCommand, watchArgv, watchCommand, runPresets, DEFAULT_PROVIDER } from './command';
+
+describe('config-derived tokens are validated (app.json is repo content)', () => {
+  const opts = { source: 'github', concurrency: 3, loopV1: false };
+  const payloads = [
+    'claude; touch /tmp/x #',
+    'claude && id',
+    '$(id)',
+    '`id`',
+    'claude | sh',
+    'claude\nid',
+    'claude --flow evil',
+    '--flow=evil',
+    '-x',
+    'Claude',
+    '',
+  ];
+
+  it.each(payloads)('rejects provider %j in every builder', (provider) => {
+    expect(() => watchArgv({ provider }, opts)).toThrow(/Invalid provider/);
+    expect(() => watchCommand({ provider }, opts)).toThrow(/Invalid provider/);
+    expect(() => runCommand({ provider })).toThrow(/Invalid provider/);
+  });
+
+  it('rejects a source outside the allowlist', () => {
+    expect(() => watchArgv({}, { ...opts, source: 'github; id' })).toThrow(/Invalid Task Source/);
+    expect(() => runCommand({ source: 'x;id' })).toThrow(/Invalid Task Source/);
+  });
+
+  it('accepts built-in and custom provider names', () => {
+    for (const provider of ['claude', 'codex', 'openrouter', 'my-proxy', 'corp.gw_2']) {
+      expect(watchArgv({ provider }, opts)).toContain(provider);
+    }
+  });
+
+  it('builds an argv with one element per argument (no shell string)', () => {
+    expect(watchArgv({ provider: 'zai' }, { source: 'gitlab', concurrency: 2.7, loopV1: true })).toEqual([
+      'vanguard', 'watch', '--gitlab', '--concurrency', '2', '--loop-v1', '--provider', 'zai', '--max-turns', '30',
+    ]);
+    expect(watchArgv({}, { ...opts, concurrency: 0 })).toContain('1');
+  });
+});
 
 describe('command builder', () => {
   it('defaults the provider to claude, never zai/--llm-proxy', () => {
