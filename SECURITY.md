@@ -51,4 +51,6 @@ Anything that crosses one of these boundaries:
 
 ## Security model
 
-How the boundaries work: the [Security section of the README](README.md#security) and the [self-hosted security review](docs/plans/2026-11-06-self-hosted-security-review.md).
+How the boundaries work: the [Security section of the README](README.md#security), [docs/security/boundaries.md](docs/security/boundaries.md) and the [self-hosted security review](docs/plans/2026-11-06-self-hosted-security-review.md).
+
+How the controls map to the OWASP Top 10 for Agentic Applications and the OWASP Top 10 for LLM Applications: [docs/security/owasp-mapping.md](docs/security/owasp-mapping.md). It is a self-assessment, not a certification.

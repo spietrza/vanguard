@@ -8,7 +8,7 @@ purpose, see `.gitignore`).
 
 v1 is **shadow mode**: the decision is published as a `neutral` check run plus a PR comment and
 appended to `decisions.jsonl` on the `vanguard-metrics` branch. Nothing is ever merged, approved or
-labelled. See [Approver (shadow mode)](../README.md#approver-shadow-mode) for how to run it.
+labelled. See [Approver (shadow mode)](autonomous-loop.md#approver-shadow-mode) for how to run it.
 
 ## Where the file is read from
 
