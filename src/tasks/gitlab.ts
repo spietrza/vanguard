@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 export interface GitLabNote {
   id: number;
@@ -106,7 +107,7 @@ export async function commentGitlabIssue(
   body: string,
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<void> {
-  await glab(['issue', 'note', 'create', issueIID(issueRef), '--repo', project, '-m', neutralizeQuickActions(body)]);
+  await glab(['issue', 'note', 'create', issueIID(issueRef), '--repo', project, '-m', neutralizeQuickActions(redactForPublish(body))]);
 }
 
 /** Comment an MR link back onto the source GitLab issue (closes the loop). */
