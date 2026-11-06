@@ -49,11 +49,8 @@ no URL routing needed.
 This same frontend also runs with no Tauri runtime at all, served by `vanguard hub` over plain
 HTTP/SSE (see `../../docs/hub.md`). `src/transport.ts` is the seam: every `invoke`/`listen` call goes
 through `invoke()`/`subscribe()`, which pick Tauri's IPC or the hub's `POST /rpc/<cmd>` + `/events` SSE
-stream, depending on which of these is present, in order:
-
-1. `window.__VANGUARD_HUB__ === true` — the hub injects this marker into `index.html` itself.
-2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — selects the hub branch instead of the Tauri/mock one.
-3. Otherwise, Tauri — the branch `vitest` and `dev/mockBackend.ts` always exercise.
+stream depending on `window.__VANGUARD_HUB__ === true` — the marker the hub injects into `index.html`
+itself; its absence selects Tauri, the branch `vitest` and `dev/mockBackend.ts` always exercise.
 
 The hub requires a **per-launch token** on every `/rpc/<cmd>` and on `/events`. It is never part of
 `index.html`: the hub prints and opens a launch URL that carries it in the fragment

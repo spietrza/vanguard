@@ -1,6 +1,6 @@
 import { test, expect, afterEach, vi } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { invoke, isHubMode, subscribe, onStreamReset, onHubRestart, captureHubToken } from './transport';
+import { invoke, isHubMode, subscribe, onStreamReset, onHubRestart, onHubConnectionIssue, captureHubToken } from './transport';
 
 /** Minimal fake EventSource — jsdom doesn't implement one. Tracks every instance so a test can
  * assert how many were actually constructed (the "one shared EventSource" guarantee). */
@@ -47,12 +47,7 @@ test('T-89 mode resolution: window.__VANGUARD_HUB__ === true selects hub mode', 
   expect(isHubMode()).toBe(true);
 });
 
-test('T-89 mode resolution: VITE_VANGUARD_HUB=1 selects hub mode when the marker is absent', () => {
-  vi.stubEnv('VITE_VANGUARD_HUB', '1');
-  expect(isHubMode()).toBe(true);
-});
-
-test('T-89 mode resolution: neither signal present selects the Tauri branch', async () => {
+test('T-89 mode resolution: the marker absent selects the Tauri branch', async () => {
   expect(isHubMode()).toBe(false);
   const captured: Record<string, unknown> = {};
   mockIPC((cmd, args) => {
@@ -252,9 +247,15 @@ test('T-96 a stream-reset also reaches a named subscription\'s resync sibling, n
   unlistenReset();
 });
 
-test('a permanently closed SSE stream (restarted hub, stale token) notifies onHubRestart', async () => {
+test('a permanently closed SSE stream probes before deciding: the hub\'s own token rejection notifies onHubRestart', async () => {
   window.__VANGUARD_HUB__ = true;
   vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: 'invalid hub token', kind: 'bad-request' } }), { status: 401 }),
+    ),
+  );
   const restarts: number[] = [];
   const unlistenRestart = await onHubRestart(() => restarts.push(1));
   const unlistenSub = await subscribe('event-a', () => {});
@@ -265,10 +266,67 @@ test('a permanently closed SSE stream (restarted hub, stale token) notifies onHu
 
   es.readyState = 2;
   es.emit('error', {});
+  await new Promise((r) => setTimeout(r, 0));
   expect(restarts).toEqual([1]);
 
   unlistenSub();
   unlistenRestart();
+});
+
+test('a 403 on /events (the Host check, not the hub\'s own token) notifies onHubConnectionIssue, not onHubRestart', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: 'Host not allowed', kind: 'bad-request' } }), { status: 403 }),
+    ),
+  );
+  const restarts: number[] = [];
+  const issues: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenIssue = await onHubConnectionIssue(() => issues.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  const es = FakeEventSource.instances[0]!;
+
+  es.readyState = 2;
+  es.emit('error', {});
+  await new Promise((r) => setTimeout(r, 0));
+  expect(issues).toEqual([1]);
+  expect(restarts).toEqual([]);
+
+  unlistenSub();
+  unlistenIssue();
+  unlistenRestart();
+});
+
+test('a network error probing /events (a proxy 502, connection dropped) notifies onHubConnectionIssue, not onHubRestart', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network error'); }));
+  const restarts: number[] = [];
+  const issues: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenIssue = await onHubConnectionIssue(() => issues.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  const es = FakeEventSource.instances[0]!;
+
+  es.readyState = 2;
+  es.emit('error', {});
+  await new Promise((r) => setTimeout(r, 0));
+  expect(issues).toEqual([1]);
+  expect(restarts).toEqual([]);
+
+  unlistenSub();
+  unlistenIssue();
+  unlistenRestart();
+});
+
+test('onHubConnectionIssue is a no-op outside hub mode', async () => {
+  const unlisten = await onHubConnectionIssue(() => {
+    throw new Error('must not be called under Tauri');
+  });
+  expect(() => unlisten()).not.toThrow();
 });
 
 test('a 401 from /rpc/<cmd> also notifies onHubRestart, and still rejects with the message', async () => {

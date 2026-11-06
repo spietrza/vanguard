@@ -14,7 +14,7 @@ import { listProjects, addProject, cloneProject, removeProject, listActive } fro
 import { projectColor, contrastColor } from './color';
 import { createNavGuardRegistry, NavGuardContext } from './navGuard';
 import { ProjectCombobox } from './ProjectCombobox';
-import { isHubMode, onHubRestart } from './transport';
+import { isHubMode, onHubRestart, onHubConnectionIssue } from './transport';
 import type { Project, ActiveRun } from './vanguard-output';
 
 function applyTheme(theme: Theme): void {
@@ -37,6 +37,7 @@ export default function App() {
   const [newTaskNonce, setNewTaskNonce] = useState(0);
   const [palette, setPalette] = useState(false);
   const [hubRestarted, setHubRestarted] = useState(false);
+  const [hubConnectionIssue, setHubConnectionIssue] = useState(false);
   // Navigation guard (S8, #339): a dirty screen registers a confirm; ALL App-owned navigation
   // routes through navigate(), because a project switch REMOUNTS Inspector (key below) and a
   // screen switch unmounts the editor — component-local confirms never fire for either.
@@ -142,6 +143,13 @@ export default function App() {
   // stays closed, so point at the launch URL instead of letting the UI go silently stale.
   useEffect(() => {
     const un = onHubRestart(() => setHubRestarted(true));
+    return () => void un.then((f) => f());
+  }, []);
+
+  // Anything else that kills the SSE stream for good — a 403 from the Host check, a reverse proxy's
+  // 502 — is not fixed by reloading, so it gets its own neutral banner instead of "the hub restarted".
+  useEffect(() => {
+    const un = onHubConnectionIssue(() => setHubConnectionIssue(true));
     return () => void un.then((f) => f());
   }, []);
 
@@ -251,6 +259,11 @@ export default function App() {
         >
           This tab has no valid hub token (the hub restarted, or the page was opened without its launch
           URL) — open the URL `vanguard hub` printed to reconnect.
+        </div>
+      )}
+      {!hubRestarted && hubConnectionIssue && (
+        <div role="alert" className="shrink-0 border-b border-border bg-muted px-4 py-2 text-sm text-muted-foreground">
+          Lost connection to the hub — check your network and reload if it doesn't come back.
         </div>
       )}
       <TopBar
