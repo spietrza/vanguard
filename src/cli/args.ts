@@ -285,7 +285,7 @@ export type Command =
     }
   | { kind: 'sidecar' }
   | { kind: 'complete' }
-  | { kind: 'hub'; repoPath: string; host: string; port: number; uiDir?: string; open: boolean }
+  | { kind: 'hub'; repoPath: string; host: string; port: number; uiDir?: string; open: boolean; allowedHosts?: string[] }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -434,6 +434,7 @@ function parseCommitAuthor(raw: string | boolean | undefined): { name: string; e
  */
 export function parseCli(argv: string[], cwd: string): Command {
   let values: Record<string, string | boolean | undefined>;
+  let allowedHosts: string[] | undefined;
   let positionals: string[];
   try {
     const parsed = parseArgs({
@@ -550,10 +551,13 @@ export function parseCli(argv: string[], cwd: string): Command {
         host: { type: 'string' },
         'ui-dir': { type: 'string' },
         'no-open': { type: 'boolean' },
+        'allowed-host': { type: 'string', multiple: true },
         help: { type: 'boolean' },
       },
     });
-    values = parsed.values;
+    const { 'allowed-host': hosts, ...singleValues } = parsed.values;
+    allowedHosts = hosts;
+    values = singleValues;
     positionals = parsed.positionals;
   } catch {
     return { kind: 'help' };
@@ -732,6 +736,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       port,
       ...(typeof values['ui-dir'] === 'string' ? { uiDir: values['ui-dir'] } : {}),
       open: values['no-open'] !== true,
+      ...(allowedHosts?.length ? { allowedHosts } : {}),
     };
   }
 

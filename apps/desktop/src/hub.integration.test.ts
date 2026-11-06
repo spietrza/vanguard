@@ -193,6 +193,7 @@ beforeEach(async () => {
   baseUrl = `http://127.0.0.1:${port}`;
 
   window.__VANGUARD_HUB__ = true;
+  window.__VANGUARD_HUB_TOKEN__ = hub.token;
   vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) => realFetch(`${baseUrl}${String(input)}`, init));
   vi.stubGlobal('EventSource', MinimalEventSource);
 });
@@ -200,6 +201,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllGlobals();
   delete window.__VANGUARD_HUB__;
+  delete window.__VANGUARD_HUB_TOKEN__;
   await hub.close();
   await rm(repo, { recursive: true, force: true });
   await rm(configDir, { recursive: true, force: true });

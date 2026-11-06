@@ -14,7 +14,7 @@ import { listProjects, addProject, cloneProject, removeProject, listActive } fro
 import { projectColor, contrastColor } from './color';
 import { createNavGuardRegistry, NavGuardContext } from './navGuard';
 import { ProjectCombobox } from './ProjectCombobox';
-import { isHubMode } from './transport';
+import { isHubMode, onHubRestart } from './transport';
 import type { Project, ActiveRun } from './vanguard-output';
 
 function applyTheme(theme: Theme): void {
@@ -36,6 +36,7 @@ export default function App() {
   // unconsumed nonce, so returning to the screen by other paths restores the last-open draft.
   const [newTaskNonce, setNewTaskNonce] = useState(0);
   const [palette, setPalette] = useState(false);
+  const [hubRestarted, setHubRestarted] = useState(false);
   // Navigation guard (S8, #339): a dirty screen registers a confirm; ALL App-owned navigation
   // routes through navigate(), because a project switch REMOUNTS Inspector (key below) and a
   // screen switch unmounts the editor — component-local confirms never fire for either.
@@ -134,6 +135,13 @@ export default function App() {
         void getCurrentWindow().destroy();
       }
     });
+    return () => void un.then((f) => f());
+  }, []);
+
+  // A restarted hub invalidates this page's per-launch token: every RPC 401s and the SSE stream
+  // stays closed, so say "reload" instead of letting the UI go silently stale.
+  useEffect(() => {
+    const un = onHubRestart(() => setHubRestarted(true));
     return () => void un.then((f) => f());
   }, []);
 
@@ -236,6 +244,14 @@ export default function App() {
       >
         Vanguard Inspector
       </div>
+      {hubRestarted && (
+        <div
+          role="alert"
+          className="shrink-0 border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+        >
+          The hub restarted — reload the page to reconnect.
+        </div>
+      )}
       <TopBar
         crumbs={crumbs}
         projectSwitcher={projectSwitcher}
