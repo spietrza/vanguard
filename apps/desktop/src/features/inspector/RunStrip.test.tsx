@@ -30,6 +30,15 @@ test('marks a completed stage done', () => {
   expect(screen.getByTestId('stage-0')).toHaveAttribute('data-phase', 'done');
 });
 
+test('renders a warning banner for an exposed-credential advisory', () => {
+  const warned = build([
+    { runId: 'r1', event: { type: 'run-start', taskId: 't', flow: 'f', provider: 'p', stages: ['a'] } },
+    { runId: 'r1', event: { type: 'warning', message: "codex's subscription credential is visible to the agent" } },
+  ]);
+  render(<RunStrip state={warned} onCancel={() => {}} />);
+  expect(screen.getByTestId('run-warning')).toHaveTextContent('visible to the agent');
+});
+
 test('renders terminal: PR link on success', () => {
   const done = build([
     { runId: 'r1', event: { type: 'run-start', taskId: 't', flow: 'f', provider: 'p', stages: ['a'] } },

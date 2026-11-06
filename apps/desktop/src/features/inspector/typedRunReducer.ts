@@ -13,6 +13,8 @@ export interface TypedRunState {
   stages: string[];
   stageState: Record<number, StagePhase>;
   usdSpent: number;
+  /** Non-fatal advisories (e.g. a credential the LLM proxy doesn't cover) — accumulated, never cleared. */
+  warnings: string[];
   terminal?: { kind: 'success' | 'no-changes' | 'secret-blocked' | 'error' | 'cancelled'; prUrl?: string; message?: string };
 }
 
@@ -23,7 +25,7 @@ export type AppRunEvent = RunEvent | { type: 'run-accepted'; repoPath?: string }
 type Incoming = AppRunEvent;
 
 export function initialTypedRun(): TypedRunState {
-  return { stages: [], stageState: {}, usdSpent: 0 };
+  return { stages: [], stageState: {}, usdSpent: 0, warnings: [] };
 }
 
 /**
@@ -60,6 +62,8 @@ export function reduceTypedRun(
       return { ...state, runId, stageState: { ...state.stageState, [e.index]: e.outcome === 'completed' ? 'done' : 'failed' } };
     case 'cost':
       return { ...state, runId, usdSpent: e.usdSpent }; // cumulative — last wins, never sum
+    case 'warning':
+      return { ...state, runId, warnings: [...state.warnings, e.message] };
     case 'run-end':
       return {
         ...state,

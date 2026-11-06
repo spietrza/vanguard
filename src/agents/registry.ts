@@ -532,6 +532,49 @@ export function assertEgressCompatible(choice: ProviderChoice): void {
 }
 
 /**
+ * Whether this choice can run under --llm-proxy at ALL (structural eligibility, not credential
+ * availability): false for a direct-mode-only provider (meridian, repo customs) in any of the
+ * implementer/reviewer/fallback roles, or for a primary-sidecar-owning provider (zai/openrouter) used
+ * as reviewer-only or fallback while a different provider implements — the same combinations
+ * `validateProviderChoice({ proxyMode: true })` rejects. Callers that auto-enable the proxy (the hub)
+ * use this to decide whether to even attempt it, instead of surfacing the AgentError to the caller.
+ *
+ * Only proxy-specific ineligibility answers false: everything wrong with the choice REGARDLESS of the
+ * proxy — an unknown or broken provider name, a transport collision — still throws, so a caller that
+ * reads false and runs direct can never swallow one of those.
+ */
+export function llmProxySupported(choice: ProviderChoice): boolean {
+  assertProvidersResolvable(choice);
+  validateProviderChoice(choice, {});
+  try {
+    validateProviderChoice(choice, { proxyMode: true });
+    return true;
+  } catch (error) {
+    if (error instanceof AgentError) return false;
+    throw error;
+  }
+}
+
+/**
+ * Name of the first used provider whose subscription credential (e.g. Codex's CODEX_AUTH_JSON) is set
+ * in env, if any. `providerSecrets` forwards that credential into the sandbox verbatim BEFORE it ever
+ * consults `opts.proxyMode` (the subscription branch `continue`s first), so --llm-proxy gives it no
+ * protection even when active. Callers that auto-enable the proxy (the hub) use this to detect when
+ * they must warn instead of silently claiming protection the proxy does not actually provide.
+ */
+export function subscriptionCredentialProvider(
+  choice: ProviderChoice,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return usedProviderNames(choice).find((name) => {
+    const sub = resolveSpec(name, choice.customProviders).key?.subscriptionEnv;
+    if (sub === undefined) return false;
+    const value = env[sub];
+    return value !== undefined && value !== '';
+  });
+}
+
+/**
  * Resolve a provider choice into agents + split secrets, shared by every runner. Keeps provider
  * construction, the used-provider set, the transport-collision check, the fail-fast key check, and
  * Anthropic-auth suppression in one place — all derived from the PROVIDERS table (no per-runner copy).

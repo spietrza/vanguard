@@ -26,6 +26,13 @@ describe('reduceTypedRun', () => {
     expect(s.usdSpent).toBe(0.05);
   });
 
+  it('warnings accumulate rather than last-wins', () => {
+    let s = reduceTypedRun(initialTypedRun(), ev('r1', { type: 'run-accepted' }));
+    s = reduceTypedRun(s, ev('r1', { type: 'warning', message: 'first' }));
+    s = reduceTypedRun(s, ev('r1', { type: 'warning', message: 'second' }));
+    expect(s.warnings).toEqual(['first', 'second']);
+  });
+
   // S8 item 4 — the narrowed adoption rule: accept-time filtering alone was insufficient because
   // ANY first event used to adopt a runId into a virgin strip.
   it('a virgin strip refuses every event except run-accepted (foreign mid-flight events cannot seed it)', () => {
