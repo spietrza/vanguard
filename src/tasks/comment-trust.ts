@@ -17,11 +17,12 @@ export type AuthorTrust = 'association' | 'allowed' | 'issue-author' | 'bot' | '
 /**
  * Bot recognition for *granting* trust: exact logins only. An outsider can pick a username such as
  * `mallory-vanguard`, so the substring match of isBotLogin must never make a comment authoritative.
+ * No bare `vanguard`: that GitHub login is unclaimed, so anyone could register it. Vanguard comments as
+ * `github-actions` in CI and as the token's user locally; a dedicated bot account goes in botLogins.
  */
 function isTrustedBotLogin(login: string, extraBotLogins?: readonly string[]): boolean {
   const lower = login.toLowerCase();
   return (
-    lower === 'vanguard' ||
     lower.endsWith('[bot]') ||
     lower === 'github-actions' ||
     (extraBotLogins ?? []).some((b) => lower === b.toLowerCase())

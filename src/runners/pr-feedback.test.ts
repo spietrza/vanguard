@@ -221,7 +221,7 @@ describe('selectActionableFeedback', () => {
   });
 
   it('drops a comment authored by vanguard (non-recursion)', () => {
-    const fb = makeFeedback({ items: [commentItem({ author: 'vanguard' })] });
+    const fb = makeFeedback({ items: [commentItem({ author: 'github-actions' })] });
     expect(selectActionableFeedback(fb, opts)).toHaveLength(0);
   });
 
@@ -295,7 +295,7 @@ describe('selectActionableFeedback', () => {
   it('handles mixed bag: returns only the expected survivors', () => {
     const items: FeedbackItem[] = [
       threadItem({ author: 'alice', isResolved: false }),                   // keep
-      threadItem({ author: 'vanguard', isResolved: false }),                 // drop (bot)
+      threadItem({ author: 'github-actions', isResolved: false }),                 // drop (bot)
       threadItem({ isResolved: true, author: 'alice' }),                    // drop (resolved)
       reviewItem({ author: 'bob', createdAt: '2024-01-11T00:00:00Z' }),    // keep
       commentItem({ author: 'carol', createdAt: '2024-01-09T00:00:00Z' }), // drop (old)
@@ -362,9 +362,9 @@ describe('countRevisionRoundsFromFeedback over fetched feedback', () => {
   it('counts repeated markers for the same head as one revision round', async () => {
     await expect(fetchedRounds(makeGqlPayload({
       comments: [
-        { author: { login: 'vanguard' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
-        { author: { login: 'vanguard' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
-        { author: { login: 'vanguard' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
+        { author: { login: 'github-actions' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'github-actions' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
+        { author: { login: 'github-actions' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
       ],
     }))).resolves.toBe(1);
   });
@@ -372,8 +372,8 @@ describe('countRevisionRoundsFromFeedback over fetched feedback', () => {
   it('counts distinct revision marker heads as distinct rounds', async () => {
     await expect(fetchedRounds(makeGqlPayload({
       comments: [
-        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
-        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
+        { author: { login: 'github-actions' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'github-actions' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
       ],
     }))).resolves.toBe(2);
   });
@@ -389,7 +389,7 @@ describe('countRevisionRoundsFromFeedback over fetched feedback', () => {
   it('counts rounds from both thread replies and PR-level comments', async () => {
     await expect(fetchedRounds(makeGqlPayload({
       comments: [
-        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'github-actions' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
       ],
       threadCommentBodies: ['Fixed inline.\n\n<!-- vanguard-revision: sha-round2 -->'],
     }))).resolves.toBe(2);

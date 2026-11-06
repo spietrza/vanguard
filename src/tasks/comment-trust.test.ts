@@ -10,7 +10,7 @@ describe('comment trust', () => {
     expect(classifyAuthor('mallory', undefined)).toBe('no-association');
     expect(classifyAuthor('Alice', 'NONE', { allowedAuthors: ['ALICE'] })).toBe('allowed');
     expect(classifyAuthor('Alice', undefined, { issueAuthor: 'ALICE' })).toBe('issue-author');
-    for (const author of ['vanguard', 'foo[bot]', 'github-actions', 'custom']) {
+    for (const author of ['foo[bot]', 'github-actions', 'custom']) {
       expect(classifyAuthor(author, 'OWNER', { botLogins: ['CUSTOM'] })).toBe('bot');
     }
     expect(classifyAuthor('mallory-vanguard', 'NONE')).toBe('untrusted');
@@ -40,7 +40,8 @@ describe('comment trust', () => {
       expect(classifyAuthor(author, undefined, { allowedAuthors: ['maintainer'] })).toBe('untrusted');
     }
     expect(classifyAuthor('vg-bot', undefined, { botLogins: ['vg-bot'] })).toBe('bot');
-    expect(classifyAuthor('vanguard', 'NONE')).toBe('bot'); // GitHub path unchanged
+    expect(classifyAuthor('github-actions', 'NONE')).toBe('bot'); // GitHub path keeps the built-in names
+    expect(classifyAuthor('vanguard', 'NONE')).toBe('untrusted'); // an unclaimed login is no bot
   });
   it('T3: describes known and absent associations', () => {
     expect(describeIgnoredAuthor('mallory', 'NONE')).toBe('@mallory (NONE)');
