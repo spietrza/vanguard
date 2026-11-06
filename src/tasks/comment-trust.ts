@@ -37,9 +37,17 @@ export function isBotLogin(login: string, extraBotLogins?: readonly string[]): b
   return login.toLowerCase().includes('vanguard') || isTrustedBotLogin(login, extraBotLogins);
 }
 
-/** Bot check first (so Vanguard's own comments classify as 'bot', never 'association'). */
+/**
+ * Bot check first (so Vanguard's own comments classify as 'bot', never 'association'). The built-in
+ * names are GitHub logins: on a provider with no association model (GitLab) anyone can register
+ * `vanguard` or `github-actions`, so there only the operator's explicit botLogins count.
+ */
 export function classifyAuthor(author: string, association: string | undefined, opts: TrustOptions = {}): AuthorTrust {
-  if (isTrustedBotLogin(author, opts.botLogins)) return 'bot';
+  const isBot =
+    association === undefined
+      ? (opts.botLogins ?? []).some((b) => b.toLowerCase() === author.toLowerCase())
+      : isTrustedBotLogin(author, opts.botLogins);
+  if (isBot) return 'bot';
   const lowerAuthor = author.toLowerCase();
   if ((opts.allowedAuthors ?? []).some((a) => a.toLowerCase() === lowerAuthor)) return 'allowed';
   if (association !== undefined && TRUSTED_ASSOCIATIONS.has(association.trim().toUpperCase())) return 'association';

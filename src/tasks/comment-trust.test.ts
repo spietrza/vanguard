@@ -34,6 +34,14 @@ describe('comment trust', () => {
     for (const association of ['', 'NONE']) expect(classifyAuthor('mallory', association, { allowedAuthors: ['maintainer'] })).toBe('untrusted');
     expect(classifyAuthor('alice', 'MEMBER', { allowedAuthors: ['maintainer'] })).toBe('association');
   });
+  it('T5: built-in GitHub bot names grant nothing where the provider has no association (GitLab)', () => {
+    // Anyone can register `vanguard` or `github-actions` on GitLab; only explicit botLogins count there.
+    for (const author of ['vanguard', 'github-actions', 'Vanguard']) {
+      expect(classifyAuthor(author, undefined, { allowedAuthors: ['maintainer'] })).toBe('untrusted');
+    }
+    expect(classifyAuthor('vg-bot', undefined, { botLogins: ['vg-bot'] })).toBe('bot');
+    expect(classifyAuthor('vanguard', 'NONE')).toBe('bot'); // GitHub path unchanged
+  });
   it('T3: describes known and absent associations', () => {
     expect(describeIgnoredAuthor('mallory', 'NONE')).toBe('@mallory (NONE)');
     expect(describeIgnoredAuthor('mallory', '')).toBe('@mallory (none)');
