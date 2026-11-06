@@ -1,13 +1,14 @@
-import { cp, lstat, mkdir, readFile, readdir, readlink, rm } from 'node:fs/promises';
+import { cp, lstat, readFile, readdir, readlink, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { execa } from 'execa';
 import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
 import { hasTerminationSignal } from '../structured/extract.js';
-import { captureSession, restoreSession, sessionPath } from '../agents/session-store.js';
+import { captureSession, hostSessionFile, isSafeSessionId, restoreSession, sessionPath } from '../agents/session-store.js';
 import { agentFamily, cacheEfficiency } from '../agents/provider.js';
 import { stageMetric } from './run-metric.js';
+import { assertStatePath, ensureStateDir } from './state-path.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
@@ -330,8 +331,7 @@ async function collectChangedFiles(staging: string, worktree: string, rel: strin
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
 async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
-  const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
-  await mkdir(staging, { recursive: true });
+  const staging = await ensureStateDir(ctx.localRepoPath, join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId));
   try {
     await ctx.sandbox.copyFileOut(WORKDIR, staging);
     const dropped: string[] = [];
@@ -389,17 +389,28 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
   const sources = [input.signal, timeout.signal].filter((s): s is AbortSignal => s !== undefined);
   const signal = AbortSignal.any(sources);
 
+  // A claude-CLI session id names host files (capture/restore below) and comes from agent output, so
+  // one that is not a plain id token is dropped: the stage runs without resume rather than on a path.
+  const claudeFamily = agentFamily(input.agent.name) === 'claude-cli';
+  const safeSession = (id: string | undefined): string | undefined => {
+    if (id === undefined || !claudeFamily || isSafeSessionId(id)) return id;
+    ctx.log.warn({ taskId: ctx.taskId, sessionId: JSON.stringify(id).slice(0, 80) }, 'ignoring malformed session id');
+    return undefined;
+  };
+  const resumeSessionId = safeSession(input.resumeSessionId);
+
   try {
     // Only the claude-CLI providers have a captured jsonl to restore (see captureSession below); codex/cursor
     // keep their chat in the sandbox, so a restore would copyIn a host file that never existed and throw.
-    if (input.resumeSessionId !== undefined && agentFamily(input.agent.name) === 'claude-cli') {
+    if (resumeSessionId !== undefined && claudeFamily) {
       // Within a shared sandbox the session is already present natively (the prior stage wrote it).
       // Restoring it would overwrite the agent-owned jsonl with a root-owned copy the agent cannot
       // read, breaking resume. Only restore for a true cross-run resume, when it is not present.
-      const present = await ctx.sandbox.exists(sessionPath(ctx.home, WORKDIR, input.resumeSessionId));
+      const present = await ctx.sandbox.exists(sessionPath(ctx.home, WORKDIR, resumeSessionId));
       if (!present) {
-        const hostFile = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId, `${input.resumeSessionId}.jsonl`);
-        await restoreSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId: input.resumeSessionId, hostFile });
+        const hostFile = hostSessionFile(join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId), resumeSessionId);
+        await assertStatePath(ctx.localRepoPath, hostFile);
+        await restoreSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId: resumeSessionId, hostFile });
       }
     }
 
@@ -414,7 +425,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       signal,
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
       ...(input.maxBudgetUsd !== undefined ? { maxBudgetUsd: input.maxBudgetUsd } : {}),
-      ...(input.resumeSessionId !== undefined ? { resumeSessionId: input.resumeSessionId } : {}),
+      ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
       ...(input.forkSession !== undefined ? { forkSession: input.forkSession } : {}),
       ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
       ...(input.mcpConfig !== undefined ? { mcpConfig: input.mcpConfig } : {}),
@@ -424,7 +435,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
 
     let finalText = '';
     let turns = 0;
-    let sessionId = input.resumeSessionId;
+    let sessionId = resumeSessionId;
     let usage: AgentUsage | undefined;
     let costUsd: number | undefined;
     let transcript: string | undefined;
@@ -435,14 +446,14 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       if (next.done) {
         finalText = next.value.finalText;
         turns = next.value.turns;
-        if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
+        if (next.value.sessionId !== undefined) sessionId = safeSession(next.value.sessionId) ?? sessionId;
         usage = next.value.usage;
         costUsd = next.value.costUsd;
         transcript = next.value.transcript;
         if (next.value.model !== undefined) modelUsed = next.value.model;
         break;
       }
-      if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
+      if (next.value.sessionId !== undefined) sessionId = safeSession(next.value.sessionId) ?? sessionId;
       // DEBUG-ONLY: this line logs raw model output (`text`) and may contain task content; it must
       // stay at debug level. Never log prompts or secrets, and never raise this to info.
       ctx.log.debug({ taskId: ctx.taskId, text: next.value.text }, 'agent turn');
@@ -472,10 +483,9 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     // the claude-CLI providers write there; codex/cursor report a session id but no jsonl, so skip them
     // entirely (no failed copy, no noise). For a claude-family provider the copy should succeed — if it
     // does not, that is a real signal, so log at warn (still non-fatal: capture is an optimization).
-    if (sessionId !== undefined && agentFamily(input.agent.name) === 'claude-cli') {
-      const hostDir = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId);
-      await mkdir(hostDir, { recursive: true });
+    if (sessionId !== undefined && claudeFamily) {
       try {
+        const hostDir = await ensureStateDir(ctx.localRepoPath, join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId));
         await captureSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId, hostDir });
       } catch (cause) {
         ctx.log.warn({ taskId: ctx.taskId, sessionId, err: String(cause) }, 'session capture failed');

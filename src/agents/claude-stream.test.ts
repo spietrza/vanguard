@@ -246,4 +246,17 @@ describe('runClaudeCli', () => {
     expect(captured.command.startsWith('claude')).toBe(true);
     expect(captured.opts?.input).toBe('do it');
   });
+
+  it('drops a forged session_id that is not a plain id token', async () => {
+    const forged = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'working' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: '../../runs/metrics', result: 'done' }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(forged));
+    expect(out.sessionId).toBe('sess-1');
+
+    const onlyForged = JSON.stringify({ type: 'result', subtype: 'success', session_id: '/etc/passwd', result: 'done' });
+    expect((await drain(fakeSandbox(onlyForged))).out.sessionId).toBeUndefined();
+  });
 });
