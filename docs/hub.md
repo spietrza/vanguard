@@ -174,7 +174,8 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 The **Add project** dialog has two modes:
 
 - **Existing folder** — browse (`browse_dirs`, confined to the browse root) to a directory that's
-  already a git work tree and add it, exactly as before.
+  already a git work tree and add it, exactly as before. `add_project` applies the same browse-root
+  confinement, so a project outside the browse root cannot be added.
 - **Clone repository** — paste a repository URL, pick the parent folder with the same browser, and
   optionally override the folder name (default: the repo name from the URL). The hub clones it under
   the chosen parent and adds it, so a fresh install or a VPS hub with nothing to browse yet doesn't
