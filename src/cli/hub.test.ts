@@ -295,7 +295,7 @@ describe('hubCommand', () => {
       expect(token).toMatch(/^[a-f0-9]{64}$/);
       const rpc = (t: string): Promise<Response> =>
         fetch(`${opened.origin}/rpc/list_projects`, {
-          method: 'POST', headers: { 'content-type': 'application/json', 'x-vanguard-hub-token': t }, body: '{}',
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-vanguard-hub-token': t, origin: opened.origin }, body: '{}',
         });
       expect((await rpc(token)).status).toBe(200);
       expect((await rpc('')).status).toBe(401);

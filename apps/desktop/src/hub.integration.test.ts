@@ -212,7 +212,18 @@ beforeEach(async () => {
   window.__VANGUARD_HUB__ = true;
   // What the browser does with the CLI's launch URL (`/#token=…`): the served page carries no token.
   stubBrowserUrl(`${baseUrl}/#token=${hub.token}`);
-  vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) => realFetch(`${baseUrl}${String(input)}`, init));
+  // A same-origin browser page: Origin on every non-GET request, and a one-entry cookie jar for the
+  // `/events` session cookie (Node's fetch keeps none).
+  let cookie: string | undefined;
+  vi.stubGlobal('fetch', async (input: string | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if ((init?.method ?? 'GET') !== 'GET') headers.set('origin', baseUrl);
+    if (cookie !== undefined) headers.set('cookie', cookie);
+    const res = await realFetch(`${baseUrl}${String(input)}`, { ...init, headers });
+    const setCookie = res.headers.get('set-cookie');
+    if (setCookie !== null) cookie = setCookie.split(';', 1)[0];
+    return res;
+  });
   vi.stubGlobal('EventSource', MinimalEventSource);
 });
 

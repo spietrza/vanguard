@@ -9,7 +9,7 @@ import { serveStatic } from './static.js';
 import { EventBus } from './events.js';
 import { writeJson, jsonError } from './json-response.js';
 import { dispatchRpc, classifyError, type RpcContext } from './rpc.js';
-import { encodeError, encodeResult, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM, HUB_TOKEN_REJECTED } from '../hub-wire.js';
+import { encodeError, encodeResult, HUB_EVENTS_SESSION_PATH, HUB_TOKEN_HEADER, HUB_TOKEN_REJECTED } from '../hub-wire.js';
 import { ProjectAllowlist, type BindOptions } from './allowlist.js';
 import { WatchRegistry, type WatchOptions } from './watch.js';
 import { createRunSession } from './run-session.js';
@@ -48,7 +48,8 @@ export interface HubServer {
   readonly server: Server;
   readonly eventBus: EventBus;
   readonly allowlist: ProjectAllowlist;
-  /** Per-launch secret `/rpc/*` and `/events` require. No route serves it — not `/healthz`, not
+  /** Per-launch secret `/rpc/*` and `/events` require (`/events` also accepts the events cookie
+   * `POST /events/session` trades it for — see hub-wire.ts). No route serves it — not `/healthz`, not
    * the SPA: the CLI hands it to the operator's browser in the launch URL's fragment
    * (`src/cli/hub.ts`), which browsers never send to the server, and the SPA moves it into
    * sessionStorage (apps/desktop/src/transport.ts). Reaching the port is not enough to drive the
@@ -58,6 +59,24 @@ export interface HubServer {
   listen(port: number, host: string): Promise<void>;
   /** Graceful shutdown: ends every SSE client, stops project watchers, then closes the listener. */
   close(): Promise<void>;
+}
+
+/** The per-launch secrets: the token (header only, never in a URL), and the events-only cookie it
+ * buys at `POST /events/session`. The cookie name carries a per-launch id so two hubs on one host
+ * (cookies ignore the port) do not overwrite each other's session. */
+interface HubAuth {
+  token: string;
+  eventsCookieName: string;
+  eventsSecret: string;
+}
+
+function eventsCookieOk(header: string | undefined, auth: HubAuth): boolean {
+  if (header === undefined) return false;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq !== -1 && part.slice(0, eq).trim() === auth.eventsCookieName) return tokenOk(part.slice(eq + 1).trim(), auth.eventsSecret);
+  }
+  return false;
 }
 
 function tokenOk(candidate: string | null | undefined, token: string): boolean {
@@ -116,14 +135,15 @@ function singleHeader(value: string | string[] | undefined): string | undefined 
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Same-origin check for mutating routes: no Origin header (curl, same-process tooling) is allowed
- * through; a present Origin must match the request's own Host, or the request is cross-origin. This
+/** Same-origin check for mutating routes: the Origin header is required — every browser sends it on
+ * a POST, and the hub has no non-browser RPC client (a script can send one itself) — and must match
+ * the request's own Host, or the request is cross-origin. This
  * guards against cross-site requests by host, not by scheme, so an HTTPS reverse proxy in front of
  * the hub (the VPS deployment) works with no extra configuration: the browser's `https://` Origin
  * still matches the `Host` header the hub sees, provided the proxy preserves the public Host. */
 function sameOriginOk(req: IncomingMessage): boolean {
   const origin = singleHeader(req.headers.origin);
-  if (origin === undefined) return true;
+  if (origin === undefined) return false;
   const host = req.headers.host;
   if (host === undefined) return false;
   try {
@@ -223,7 +243,7 @@ async function handleRequest(
   ctx: RpcContext,
   eventBus: EventBus,
   opts: HubServerOptions,
-  token: string,
+  auth: HubAuth,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -242,9 +262,28 @@ async function handleRequest(
     return;
   }
 
+  if (pathname === HUB_EVENTS_SESSION_PATH) {
+    if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
+    if (!tokenOk(singleHeader(req.headers[HUB_TOKEN_HEADER]), auth.token)) {
+      jsonError(res, 401, HUB_TOKEN_REJECTED, 'bad-request');
+      return;
+    }
+    if (!sameOriginOk(req)) {
+      jsonError(res, 400, 'cross-origin request rejected', 'bad-request');
+      return;
+    }
+    // No `Secure`: the loopback hub is plain http. SameSite=Strict + HttpOnly + Path=/events keep it
+    // off cross-site requests, out of page script, and off every other route.
+    const cookie = `${auth.eventsCookieName}=${auth.eventsSecret}; Path=/events; HttpOnly; SameSite=Strict`;
+    writeJson(res, 200, encodeResult(null), { 'set-cookie': cookie, 'cache-control': 'no-store' });
+    return;
+  }
+
   if (pathname === '/events') {
     if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
-    if (!tokenOk(url.searchParams.get(HUB_TOKEN_QUERY_PARAM), token)) {
+    const authorized =
+      tokenOk(singleHeader(req.headers[HUB_TOKEN_HEADER]), auth.token) || eventsCookieOk(singleHeader(req.headers.cookie), auth);
+    if (!authorized) {
       jsonError(res, 401, HUB_TOKEN_REJECTED, 'bad-request');
       return;
     }
@@ -255,7 +294,7 @@ async function handleRequest(
 
   if (pathname.startsWith('/rpc/')) {
     if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
-    if (!tokenOk(singleHeader(req.headers[HUB_TOKEN_HEADER]), token)) {
+    if (!tokenOk(singleHeader(req.headers[HUB_TOKEN_HEADER]), auth.token)) {
       jsonError(res, 401, HUB_TOKEN_REJECTED, 'bad-request');
       return;
     }
@@ -275,6 +314,11 @@ async function handleRequest(
 /** Build (but do not start) the hub's HTTP server. `listen`/`close` drive its lifecycle. */
 export function createHubServer(opts: HubServerOptions): HubServer {
   const token = randomBytes(32).toString('hex');
+  const auth: HubAuth = {
+    token,
+    eventsCookieName: `vanguard_hub_events_${randomBytes(4).toString('hex')}`,
+    eventsSecret: randomBytes(32).toString('hex'),
+  };
   const deps = opts.deps ?? productionDeps();
   const eventBus = new EventBus();
   eventBus.startKeepalive();
@@ -298,7 +342,7 @@ export function createHubServer(opts: HubServerOptions): HubServer {
   };
 
   const server = createServer((req, res) => {
-    void handleRequest(ctx, eventBus, opts, token, req, res).catch(() => {
+    void handleRequest(ctx, eventBus, opts, auth, req, res).catch(() => {
       if (res.headersSent) res.destroy();
       else jsonError(res, 500, 'internal server error', 'internal');
     });
