@@ -50,12 +50,12 @@ export interface HubServer {
   readonly server: Server;
   readonly eventBus: EventBus;
   readonly allowlist: ProjectAllowlist;
-  /** Per-launch secret `/rpc/*` and `/events` require. Never logged, never returned by
-   * `/healthz` — only `src/hub/static.ts` embeds it, in the SPA response, for the browser to read back.
-   * The boundary it draws: a browser page on another origin cannot read it (that's what the
-   * same-origin and Host checks are for), so it cannot drive the hub. It is NOT authentication —
-   * any other process that can reach the port gets it from `GET /` — so a non-loopback bind still
-   * needs Tailscale or an authenticating reverse proxy in front (docs/hub.md). */
+  /** Per-launch secret `/rpc/*` and `/events` require. No route serves it — not `/healthz`, not
+   * the SPA: the CLI hands it to the operator's browser in the launch URL's fragment
+   * (`src/cli/hub.ts`), which browsers never send to the server, and the SPA moves it into
+   * sessionStorage (apps/desktop/src/transport.ts). Reaching the port is not enough to drive the
+   * hub. A non-loopback bind still needs Tailscale or an authenticating reverse proxy in front
+   * (docs/hub.md): this is a launch secret, not per-user authentication. */
   readonly token: string;
   listen(port: number, host: string): Promise<void>;
   /** Graceful shutdown: ends every SSE client, stops project watchers, then closes the listener. */
@@ -258,7 +258,7 @@ async function handleRequest(
     return;
   }
 
-  const handled = await serveStatic({ uiDir: opts.uiDir, token }, req, res);
+  const handled = await serveStatic({ uiDir: opts.uiDir }, req, res);
   if (!handled) notFound(res);
 }
 
