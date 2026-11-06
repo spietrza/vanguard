@@ -70,6 +70,13 @@ export interface SandboxConfig {
   pidsLimit?: number;
   /** Join this docker network instead of the default bridge (e.g. an internal egress enclave). */
   network?: string;
+  /**
+   * Map `host.docker.internal` to the docker host (`--add-host …:host-gateway`). Unset: added only
+   * when an `env`/`secrets`/`forwardEnv` value names host.docker.internal (a host egress proxy from
+   * `startEgressProxy`, a provider endpoint on the docker host). Set it to force either way, e.g.
+   * for repo tooling that reaches host services by that name on Linux.
+   */
+  hostGateway?: boolean;
   /** Overrides sandboxSecurityOpts()'s env-derived defaults (cap-drop/add, no-new-privileges, readonly). */
   security?: Partial<SandboxSecurityOpts>;
 }

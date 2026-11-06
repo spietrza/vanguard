@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Vanguard — Autonomous Software Factory" width="820" />
+  <img src="assets/banner.png" alt="Taskcell — self-hosted software factory" width="820" />
 </p>
 
 <p align="center">
-  <b>Autonomous software factory</b> — fetches tasks from GitHub, GitLab, or Linear,<br/>
+  <b>Taskcell — self-hosted software factory</b> (formerly Vanguard) — fetches tasks from GitHub, GitLab, or Linear,<br/>
   implements them with an AI agent pipeline in an isolated sandbox, and opens PRs/MRs for human review — ready for review when every gate passed, draft otherwise.
 </p>
 
 <p align="center">
-  <a href="https://github.com/spietrza/vanguard/actions/workflows/ci.yml"><img src="https://github.com/spietrza/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/spietrza/taskcell/actions/workflows/ci.yml"><img src="https://github.com/spietrza/taskcell/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8B5CF6.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-22D3EE" alt="Node >= 24">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript">
@@ -23,9 +23,11 @@
   </picture>
 </p>
 
-## What is Vanguard?
+## What is Taskcell?
 
-Vanguard turns work items into reviewed code changes — autonomously:
+> **Taskcell was called Vanguard.** The repository moved from `spietrza/vanguard` to `spietrza/taskcell` (old links redirect). The CLI command, `VANGUARD_*` variables, `vanguard:*` labels and the `.vanguard/` directory keep their names for now, so existing setups keep working. Website: [taskcell.dev](https://taskcell.dev).
+
+Taskcell turns work items into reviewed code changes — autonomously:
 
 1. **Fetch** — pulls a Task from a pluggable Task Source: GitHub Issues, GitLab Issues, or Linear.
 2. **Run** — an AI agent pipeline (implementer → reviewer → simplifier by default, planner → implementer → reviewer with `--plan`) implements it inside an isolated Docker sandbox.
@@ -233,7 +235,7 @@ Keep your domain skills in the target repo under `.github/vanguard-skills/`:
   release/SKILL.md
 ```
 
-That is the whole setup. Vanguard injects every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/` into `run` and `watch` on every source (GitHub, GitLab, Projects, Linear), the spec pass (`spec`, and `watch` loop-v1), `revise-pr`, and the reviewers (`review-pr`, `watch-prs`, `review-mr`, `watch-mrs`). `research` runs without skills. Reviewers take repo skills from the PR's base branch, so a PR cannot change the skills of its own review. The implement workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: spietrza/vanguard/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
+That is the whole setup. Vanguard injects every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/` into `run` and `watch` on every source (GitHub, GitLab, Projects, Linear), the spec pass (`spec`, and `watch` loop-v1), `revise-pr`, and the reviewers (`review-pr`, `watch-prs`, `review-mr`, `watch-mrs`). `research` runs without skills. Reviewers take repo skills from the PR's base branch, so a PR cannot change the skills of its own review. The implement workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: spietrza/taskcell/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
 
 A repo skill with the same directory name as a bundled one replaces it, so a repo can ship its own `code-review`; the run log names every skill replaced this way. Skill directories that are symlinks are skipped, and so are `SKILL.md` files that are symlinks, with a warning in the run log. A `.github/vanguard-skills` that is not a directory, or that resolves outside the repo, fails the run.
 
@@ -354,7 +356,7 @@ What it does not give you: text. It cannot write code, a review, or explain its 
 What a live call looks like (recorded 2026-10-07, `clef-flash`, 485 input tokens, 518 ms):
 
 ```
-vanguard: spietrza/vanguard#999 difficulty probe (clef-flash, 518ms): first-try 0.58, difficulty 1.59/4, spec clear 0.79
+vanguard: spietrza/taskcell#999 difficulty probe (clef-flash, 518ms): first-try 0.58, difficulty 1.59/4, spec clear 0.79
 ```
 
 and the judge on a refusal case: an output that charges ahead scores `P(acceptable)=0.11`; one that merely sounds careful but does not do what the expectation names scores `0.48` — the judge reads the expectation, not the tone. The fork scorer gives a small, tested diff `0.91` and an empty diff `0.03`.
@@ -480,7 +482,7 @@ install. One instance per developer or team; agent code runs where the hub runs.
 pnpm install && pnpm build:ui          # once: deps + the UI bundle
 docker/build.sh                        # once: vanguard-sandbox (only needed for runs started from the hub)
 export CLAUDE_CODE_OAUTH_TOKEN=...     # the shell that starts the hub is the env the runs get
-pnpm hub --repo /path/to/your/repo     # http://127.0.0.1:7777
+pnpm hub --repo /path/to/your/repo     # opens http://127.0.0.1:7777/#token=… (the launch URL it prints)
 ```
 
 What you get per project: a **Dashboard** of projects with run counts and spend; a **Task board**
@@ -750,7 +752,7 @@ The job runs `vanguard watch --source github --once` **once**: a `ready for spec
 
 #### Run it on another repo
 
-The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: spietrza/vanguard/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
+The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: spietrza/taskcell/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
 
 Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. The reusable workflow passes `--skills .vanguard-src/skills`, which injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`), plus any skills the repo keeps in `.github/vanguard-skills/` (see [Custom skills](#custom-skills-bring-your-own)). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). The reusable workflow installs Vanguard with `--ignore-workspace`, so it also works when the target repo is a **pnpm workspace** (monorepo).
 
@@ -769,7 +771,7 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
 **2. Set the providers and drop `llm-proxy`.** Map the secret in the caller's `secrets:` block and pick a provider per stage in `with:`:
 
 ```yaml
-    uses: spietrza/vanguard/.github/workflows/implement.yml@v1
+    uses: spietrza/taskcell/.github/workflows/implement.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       spec-model: opus
@@ -802,9 +804,9 @@ One CI caveat: the stored `CODEX_AUTH_JSON` is a snapshot. Codex refreshes the s
 **How to run it.**
 
 ```bash
-vanguard approve --pr 557 --github-repo spietrza/vanguard     # decide, publish, record
-vanguard approve --pr 557 --github-repo spietrza/vanguard --json      # print the decision record
-vanguard approve --pr 557 --github-repo spietrza/vanguard --dry-run   # decide and print only — publish and record nothing
+vanguard approve --pr 557 --github-repo spietrza/taskcell     # decide, publish, record
+vanguard approve --pr 557 --github-repo spietrza/taskcell --json      # print the decision record
+vanguard approve --pr 557 --github-repo spietrza/taskcell --dry-run   # decide and print only — publish and record nothing
 ```
 
 `--github-repo` is required (the approver never infers the repo it judges), `--repo <path>` points at a local checkout of the base branch (default: cwd), and `--mode` accepts `shadow` only in v1.
@@ -816,7 +818,7 @@ vanguard approve --pr 557 --github-repo spietrza/vanguard --dry-run   # decide a
 Two kill switches, either one short-circuits to `ESCALATE` (`stopped`) before any diff or ledger collection:
 
 ```bash
-VANGUARD_APPROVER_STOP=1 vanguard approve --pr 557 --github-repo spietrza/vanguard   # per-run, env
+VANGUARD_APPROVER_STOP=1 vanguard approve --pr 557 --github-repo spietrza/taskcell   # per-run, env
 # or, repo-wide: set "enabled": false in .vanguard/approver.json on the base branch
 ```
 

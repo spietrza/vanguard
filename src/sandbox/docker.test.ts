@@ -214,6 +214,31 @@ describe('DockerSandboxProvider buildRunArgs (hardening flags)', () => {
     expect(args[args.indexOf('--security-opt') + 1]).toBe('no-new-privileges');
   });
 
+  it('maps host.docker.internal only for a sandbox pointed at the docker host', () => {
+    const alias = 'host.docker.internal:host-gateway';
+    // Default runs, and the egress enclave / llm-proxy (reached by container name), need no alias.
+    expect(new DockerSandboxProvider({}).buildRunArgs()).not.toContain(alias);
+    expect(
+      new DockerSandboxProvider({
+        network: 'vg-egr-1',
+        env: { HTTPS_PROXY: 'http://vg-proxy-1:8080', ANTHROPIC_BASE_URL: 'http://vg-llm-1:8080' },
+      }).buildRunArgs(),
+    ).not.toContain(alias);
+
+    // A host egress proxy (startEgressProxy) or a provider endpoint on the docker host does.
+    const viaEnv = new DockerSandboxProvider({ env: { HTTPS_PROXY: 'http://host.docker.internal:3128' } }).buildRunArgs();
+    expect(viaEnv[viaEnv.indexOf(alias) - 1]).toBe('--add-host');
+    expect(
+      new DockerSandboxProvider({ secrets: { ANTHROPIC_BASE_URL: 'http://Host.Docker.Internal:3000' } }).buildRunArgs(),
+    ).toContain(alias);
+
+    // An explicit setting wins either way.
+    expect(new DockerSandboxProvider({ hostGateway: true }).buildRunArgs()).toContain(alias);
+    expect(
+      new DockerSandboxProvider({ hostGateway: false, env: { HTTPS_PROXY: 'http://host.docker.internal:3128' } }).buildRunArgs(),
+    ).not.toContain(alias);
+  });
+
   it('adds back the chown trio needed by copyIn, after the drop', () => {
     const sb = new DockerSandboxProvider({ security: sandboxSecurityOpts({}) });
     const args = sb.buildRunArgs();

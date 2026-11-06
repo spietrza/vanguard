@@ -29,6 +29,24 @@ import { subscribe } from './transport';
 
 (globalThis as unknown as { window: typeof globalThis }).window = globalThis;
 
+/** Just the `location`/`history`/`sessionStorage` surface `transport.ts`'s token handoff touches. */
+function stubBrowserUrl(href: string): void {
+  const store = new Map<string, string>();
+  const location = new URL(href);
+  vi.stubGlobal('location', location);
+  vi.stubGlobal('history', {
+    state: null,
+    replaceState: (_state: unknown, _title: string, url: string): void => {
+      location.href = new URL(url, location.href).href;
+    },
+  });
+  vi.stubGlobal('sessionStorage', {
+    getItem: (k: string): string | null => store.get(k) ?? null,
+    setItem: (k: string, v: string): void => void store.set(k, v),
+    clear: (): void => store.clear(),
+  });
+}
+
 function unimplementedDeps(): SidecarDeps {
   const unimplemented = (): never => {
     throw new Error('not implemented in this fake');
@@ -193,7 +211,8 @@ beforeEach(async () => {
   baseUrl = `http://127.0.0.1:${port}`;
 
   window.__VANGUARD_HUB__ = true;
-  window.__VANGUARD_HUB_TOKEN__ = hub.token;
+  // What the browser does with the CLI's launch URL (`/#token=…`): the served page carries no token.
+  stubBrowserUrl(`${baseUrl}/#token=${hub.token}`);
   vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) => realFetch(`${baseUrl}${String(input)}`, init));
   vi.stubGlobal('EventSource', MinimalEventSource);
 });
@@ -201,7 +220,6 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllGlobals();
   delete window.__VANGUARD_HUB__;
-  delete window.__VANGUARD_HUB_TOKEN__;
   await hub.close();
   await rm(repo, { recursive: true, force: true });
   await rm(configDir, { recursive: true, force: true });
