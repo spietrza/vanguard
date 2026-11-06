@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Standalone zero-dep CONNECT proxy for the egress enclave sidecar. Only tunnels HTTPS CONNECT to
-// allowlisted domains (others 403). ALLOW (comma-separated) and PORT come from env. The allow
+// allowlisted domains on port 443 that resolve to public addresses (others 403). ALLOW and TRUSTED
+// (comma-separated; TRUSTED = custom endpoints exempt from the port/address rule) and PORT come from env. The allow
 // semantics (exact or subdomain) are imported from the shared `egress-allow.mjs`, which the host
 // `docker cp`'s next to this file — the SAME module egress-proxy.ts uses, so the two never drift.
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { writeSync } from 'node:fs';
-import { isAllowed } from './egress-allow.mjs';
+import { resolveConnectTarget } from './egress-allow.mjs';
 
 // Synchronous stdout: `docker logs` reads a pipe, and async console.log buffers can be dropped by
 // process.exit — the crash evidence is the point, so it must flush before death (PR #353 review).
@@ -24,9 +25,12 @@ const ALLOW = (process.env.ALLOW ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter((s) => s !== '');
+// Exact hosts (configured custom endpoints) that may use any port and resolve to private addresses.
+const TRUSTED = (process.env.TRUSTED ?? '')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter((s) => s !== '');
 const PORT = Number(process.env.PORT ?? '8080');
-
-const allowed = (host) => isAllowed(host, ALLOW);
 
 // The proxy must not die silently mid-run (dogfood #352: a dead proxy bricks every remaining
 // stage with ConnectionRefused). It runs as container PID 1 under `--restart on-failure`, so the
@@ -56,22 +60,22 @@ createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTT
     // disallowed telemetry hosts repeat it until the restart cap kills the enclave for good
     // (dogfood #352, second failure). Absorb socket errors before the first write can happen.
     clientSocket.on('error', () => clientSocket.destroy());
-    const target = req.url ?? '';
-    const sep = target.lastIndexOf(':');
-    const host = sep > 0 ? target.slice(0, sep) : target;
-    const port = sep > 0 ? Number(target.slice(sep + 1)) : 443;
-    if (host === '' || !Number.isInteger(port) || !allowed(host)) {
-      clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
-      return;
-    }
-    const upstream = connect(port, host, () => {
-      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      upstream.write(head);
-      upstream.pipe(clientSocket);
-      clientSocket.pipe(upstream);
-    });
-    upstream.on('error', () => clientSocket.destroy());
-    clientSocket.on('error', () => upstream.destroy());
+    // Port 443 only and no private/loopback/link-local addresses, except for TRUSTED custom endpoints.
+    resolveConnectTarget(req.url ?? '', ALLOW, TRUSTED).then((dest) => {
+      if (dest === undefined) {
+        clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+        return;
+      }
+      if (clientSocket.destroyed) return;
+      const upstream = connect(dest.port, dest.host, () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        upstream.write(head);
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      });
+      upstream.on('error', () => clientSocket.destroy());
+      clientSocket.on('error', () => upstream.destroy());
+    }, () => clientSocket.destroy());
   })
   .listen(PORT, function () {
     // The ACTUALLY-bound port (PORT=0 ⇒ ephemeral), so the banner is truthful for tests/debugging.

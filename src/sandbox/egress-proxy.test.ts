@@ -11,6 +11,7 @@ import {
   llmProxyEgressAllowlist,
   DEFAULT_EGRESS_ALLOWLIST,
 } from './egress-proxy.js';
+import { resolveConnectTarget, isPrivateAddress } from './egress-allow.mjs';
 import type { LlmProxyDep } from './llm-proxy.js';
 
 describe('isAllowed', () => {
@@ -23,6 +24,46 @@ describe('isAllowed', () => {
     expect(isAllowed('github.com.evil.com', ['github.com'])).toBe(false);
     expect(isAllowed('evilgithub.com', ['github.com'])).toBe(false);
     expect(isAllowed('exfiltrate.me', DEFAULT_EGRESS_ALLOWLIST)).toBe(false);
+  });
+});
+
+describe('resolveConnectTarget', () => {
+  const dns = (...addresses: string[]) => async (): Promise<Array<{ address: string }>> => addresses.map((address) => ({ address }));
+  const allow = ['api.example.com', 'lan.example.com'];
+
+  it('tunnels an allowlisted public host on 443 to the checked address', async () => {
+    expect(await resolveConnectTarget('api.example.com:443', allow, [], dns('203.0.113.7'))).toEqual({ host: '203.0.113.7', port: 443 });
+  });
+
+  it('refuses any port but 443 for non-trusted hosts', async () => {
+    for (const port of [22, 80, 8443, 6379]) {
+      expect(await resolveConnectTarget(`api.example.com:${port}`, allow, [], dns('203.0.113.7'))).toBeUndefined();
+    }
+  });
+
+  it('refuses allowlisted names that resolve to loopback, private, link-local or mapped addresses', async () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.214', '169.254.169.254', '100.64.0.1', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', '0.0.0.0']) {
+      expect(await resolveConnectTarget('api.example.com:443', allow, [], dns('203.0.113.7', ip))).toBeUndefined();
+    }
+  });
+
+  it('refuses non-allowlisted hosts, unresolvable names, and malformed ports', async () => {
+    expect(await resolveConnectTarget('evil.example:443', allow, [], dns('203.0.113.7'))).toBeUndefined();
+    expect(await resolveConnectTarget('api.example.com:443', allow, [], async () => { throw new Error('ENOTFOUND'); })).toBeUndefined();
+    expect(await resolveConnectTarget('api.example.com:abc', allow, [], dns('203.0.113.7'))).toBeUndefined();
+  });
+
+  it('lets a trusted (configured custom) host use any port and a LAN address, by name', async () => {
+    expect(await resolveConnectTarget('lan.example.com:3000', allow, ['lan.example.com'], dns('192.168.1.214'))).toEqual({ host: 'lan.example.com', port: 3000 });
+    // Trust is exact: a subdomain of a trusted host is not trusted.
+    expect(await resolveConnectTarget('x.lan.example.com:3000', ['lan.example.com'], ['lan.example.com'], dns('192.168.1.214'))).toBeUndefined();
+  });
+
+  it('classifies addresses', () => {
+    expect(isPrivateAddress('8.8.8.8')).toBe(false);
+    expect(isPrivateAddress('2606:4700::1111')).toBe(false);
+    expect(isPrivateAddress('127.0.0.53')).toBe(true);
+    expect(isPrivateAddress('not-an-ip')).toBe(false);
   });
 });
 
@@ -164,10 +205,15 @@ describe('startEgressProxy', () => {
     const upstreamPort = (upstream.address() as AddressInfo).port;
     cleanups.push(() => new Promise<void>((r) => upstream.close(() => r())));
 
-    const proxy = await startEgressProxy({ allowlist: ['127.0.0.1'] });
+    const proxy = await startEgressProxy({ allowlist: ['127.0.0.1'], trusted: ['127.0.0.1'] });
     cleanups.push(proxy.close);
 
     expect(await connectVia(proxy.port, `127.0.0.1:${upstreamPort}`)).toBe(200);
+
+    // Allowlisted but not trusted: a loopback address on a non-443 port is refused.
+    const untrusted = await startEgressProxy({ allowlist: ['127.0.0.1'] });
+    cleanups.push(untrusted.close);
+    expect(await connectVia(untrusted.port, `127.0.0.1:${upstreamPort}`)).toBe(403);
 
     const denying = await startEgressProxy({ allowlist: ['example.com'] });
     cleanups.push(denying.close);
