@@ -328,12 +328,37 @@ async function collectChangedFiles(staging: string, worktree: string, rel: strin
   if (!(await readFile(src)).equals(await readFile(dest))) changed.push(rel);
 }
 
+// ponytail: copy-back ceiling of 2 GiB / 200,000 files (node_modules and .git are skipped and not
+// counted). Far above any real change; it exists so a sandbox cannot fill the host disk through the worktree.
+export const COPY_BACK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+export const COPY_BACK_MAX_FILES = 200_000;
+
+/**
+ * A running total over the entries copy-back syncs into the worktree; throws a SandboxError as soon as
+ * the total size or file count passes the ceiling. Directories count toward neither.
+ */
+export function copyBackBudget(maxBytes = COPY_BACK_MAX_BYTES, maxFiles = COPY_BACK_MAX_FILES): (entry: { isDirectory: () => boolean; size: number }) => void {
+  let bytes = 0;
+  let files = 0;
+  return (entry) => {
+    if (entry.isDirectory()) return;
+    bytes += entry.size;
+    files += 1;
+    if (bytes > maxBytes || files > maxFiles) {
+      throw new SandboxError(
+        `copy-back: sandbox workspace exceeds the copy-back ceiling (${maxFiles} files / ${Math.round(maxBytes / 1024 / 1024)} MiB, node_modules and .git excluded); nothing was committed — remove build output or large generated files from the workspace`,
+      );
+    }
+  };
+}
+
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
 async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
   const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
   await mkdir(staging, { recursive: true });
   try {
     await ctx.sandbox.copyFileOut(WORKDIR, staging);
+    const charge = copyBackBudget();
     const dropped: string[] = [];
     await cp(staging, ctx.worktreePath, {
       recursive: true,
@@ -351,7 +376,9 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
           dropped.push(rel);
           return false;
         }
-        return !COPY_BACK_SKIP.test(src);
+        if (COPY_BACK_SKIP.test(src)) return false;
+        charge(await lstat(src));
+        return true;
       },
     });
     // A comparison that fails reports the whole dropped path, so an edit is never hidden.

@@ -11,10 +11,37 @@ import {
   disposeContext,
   workflowPaths,
   assertNoWorkflowChanges,
+  copyBackBudget,
 } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { skillRegistryForRun } from '../context/skill-registry.js';
-import { WorkflowGuardError } from './errors.js';
+import { SandboxError, WorkflowGuardError } from './errors.js';
+
+describe('copyBackBudget', () => {
+  const file = (size: number): { isDirectory: () => boolean; size: number } => ({ isDirectory: () => false, size });
+  const dir = { isDirectory: () => true, size: 1_000_000 };
+
+  it('passes up to the ceiling, ignoring directories', () => {
+    const charge = copyBackBudget(10, 2);
+    charge(dir);
+    charge(file(4));
+    expect(() => charge(file(6))).not.toThrow();
+  });
+
+  it('throws a clear SandboxError once total size passes the ceiling', () => {
+    const charge = copyBackBudget(10, 100);
+    charge(file(10));
+    expect(() => charge(file(1))).toThrow(SandboxError);
+    expect(() => copyBackBudget(10, 100)(file(11))).toThrow(/copy-back ceiling/);
+  });
+
+  it('throws once the file count passes the ceiling', () => {
+    const charge = copyBackBudget(1_000, 2);
+    charge(file(0));
+    charge(file(0));
+    expect(() => charge(file(0))).toThrow(/copy-back ceiling/);
+  });
+});
 import type { RunOptions } from './types.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
