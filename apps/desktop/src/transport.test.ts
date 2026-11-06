@@ -34,6 +34,7 @@ class FakeEventSource {
 afterEach(() => {
   clearMocks();
   delete window.__VANGUARD_HUB__;
+  delete window.__VANGUARD_HUB_TOKEN__;
   FakeEventSource.instances = [];
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -62,6 +63,7 @@ test('T-89 mode resolution: neither signal present selects the Tauri branch', as
 });
 
 test('T-90 hub invoke POSTs to /rpc/<cmd> with the args object and resolves result', async () => {
+  window.__VANGUARD_HUB_TOKEN__ = 'test-token';
   window.__VANGUARD_HUB__ = true;
   const calls: { url: string; init: RequestInit }[] = [];
   vi.stubGlobal(
@@ -78,6 +80,7 @@ test('T-90 hub invoke POSTs to /rpc/<cmd> with the args object and resolves resu
   expect(calls).toHaveLength(1);
   expect(calls[0].url).toBe('/rpc/list_runs');
   expect(calls[0].init.method).toBe('POST');
+  expect((calls[0].init.headers as Record<string, string>)['x-vanguard-hub-token']).toBe('test-token');
   expect((calls[0].init.headers as Record<string, string>)['content-type']).toBe('application/json');
   expect(JSON.parse(calls[0].init.body as string)).toEqual({ repoPath: '/repo' });
   expect(result).toEqual({ runs: [] });
@@ -130,6 +133,7 @@ test('T-92b a non-JSON response also rejects with a string', async () => {
 });
 
 test('T-93 one shared EventSource, handlers routed by event name', async () => {
+  window.__VANGUARD_HUB_TOKEN__ = 'a&b';
   window.__VANGUARD_HUB__ = true;
   vi.stubGlobal('EventSource', FakeEventSource);
   const aEvents: unknown[] = [];
@@ -139,6 +143,7 @@ test('T-93 one shared EventSource, handlers routed by event name', async () => {
 
   expect(FakeEventSource.instances).toHaveLength(1); // shared, not one per subscriber
   const es = FakeEventSource.instances[0]!;
+  expect(es.url).toBe('/events?token=a%26b');
   es.emit('event-a', { x: 1 });
   es.emit('event-b', { y: 2 });
   expect(aEvents).toEqual([{ x: 1 }]);

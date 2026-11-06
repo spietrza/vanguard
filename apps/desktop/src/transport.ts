@@ -3,13 +3,14 @@
 // and the hub's `POST /rpc/<cmd>` + `/events` SSE stream (a browser against `vanguard hub`, no Tauri
 // runtime present). Mode resolution order: the server-injected `window.__VANGUARD_HUB__` marker
 // (src/hub/static.ts), then `VITE_VANGUARD_HUB=1` (lets `pnpm dev` point at a running hub), else Tauri.
-import { decodeResponse, decodeEvent, STREAM_RESET_EVENT } from './hub-wire';
+import { decodeResponse, decodeEvent, STREAM_RESET_EVENT, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM } from './hub-wire';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen, type UnlistenFn } from '@tauri-apps/api/event';
 
 declare global {
   interface Window {
     __VANGUARD_HUB__?: boolean;
+    __VANGUARD_HUB_TOKEN__?: string;
   }
 }
 
@@ -29,7 +30,7 @@ async function hubInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
   try {
     response = await fetch(`/rpc/${cmd}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', [HUB_TOKEN_HEADER]: window.__VANGUARD_HUB_TOKEN__ ?? '' },
       body: JSON.stringify(args ?? {}),
     });
   } catch (err) {
@@ -67,7 +68,7 @@ const resyncHandlers = new Set<() => void>();
  * once per instance, independent of which named subscriptions come and go. */
 function ensureHubSource(): EventSource {
   if (hubSource) return hubSource;
-  hubSource = new EventSource('/events');
+  hubSource = new EventSource(`/events?${HUB_TOKEN_QUERY_PARAM}=${encodeURIComponent(window.__VANGUARD_HUB_TOKEN__ ?? '')}`);
   hubSource.addEventListener(STREAM_RESET_EVENT, () => {
     for (const h of resyncHandlers) h();
   });

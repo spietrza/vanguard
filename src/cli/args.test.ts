@@ -1574,6 +1574,11 @@ describe('parseCli doctor-mrs', () => {
 });
 
 describe('parseCli hub', () => {
+  it('preserves repeated allowed Hosts', () => {
+    expect(parseCli(['hub', '--allowed-host', 'hub.example', '--allowed-host', 'other.example:8080'], '/repo'))
+      .toMatchObject({ kind: 'hub', allowedHosts: ['hub.example', 'other.example:8080'] });
+  });
+
   const originalHost = process.env.VANGUARD_HUB_HOST;
   const originalPort = process.env.VANGUARD_HUB_PORT;
 

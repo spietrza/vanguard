@@ -59,7 +59,7 @@ never a published port.
 
 The same-origin check (`sameOriginOk` in `src/hub/server.ts`) compares the request's `Origin` header
 against its own `Host` header, not scheme, so the hub works behind an HTTPS-terminating reverse proxy
-with no extra hub flags, provided the proxy preserves the public `Host` header (including any
+when `--allowed-host <public-host[:port]>` permits the public Host and the proxy preserves that header (including any
 non-default port). Only HTTP(S) origins are accepted; the browser's `https://` Origin matches
 the public `Host` even though the proxy connects to the hub over HTTP.
 
@@ -91,6 +91,7 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 | `VANGUARD_HUB_WATCH_INTERVAL_MS` | `2000` |
 | `VANGUARD_HUB_BROWSE_ROOT` | `$HOME` |
 | `VANGUARD_HUB_ALLOW_ADD` | — |
+| `VANGUARD_HUB_ALLOWED_HOSTS` | — (comma-separated exact Host values, added to loopback Hosts on the bound port) |
 | `VANGUARD_HUB_CLONE_HOSTS` | — (comma-separated hosts, added to `github.com`/`gitlab.com`) |
 
 ## Add project: existing folder or clone a URL
@@ -192,12 +193,13 @@ process as the HTTP server, so give the container the same RAM headroom, and kee
 ## CLI flags
 
 ```
-vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no-open]
+vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no-open] [--allowed-host <host[:port]>]
 ```
 
 | Flag | Overrides | Default |
 |---|---|---|
 | `--repo <path>` | — | cwd; seeded into the project store on startup if it's a git work tree and not already present |
+| `--allowed-host <host[:port]>` (repeatable) | `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated, additive) | loopback Hosts on the bound port |
 | `--host <addr>` | `VANGUARD_HUB_HOST` | `127.0.0.1` |
 | `--port <n>` | `VANGUARD_HUB_PORT` | `7777` (1-65535; an invalid explicit `--port` is a startup error) |
 | `--ui-dir <dir>` | `VANGUARD_HUB_UI_DIR` | `<pkg>/apps/desktop/dist` |
@@ -208,3 +210,5 @@ A missing or unbuilt `--ui-dir` fails at startup, naming `pnpm --dir apps/deskto
 prints the no-auth warning above and disables `add_project`/`browse_dirs`/`clone_project` unless
 `VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
 and the project file watchers.
+
+The SPA receives a fresh per-launch token. RPC requests require `x-vanguard-hub-token`; SSE requests require the `token` query parameter. Host checks also protect the SPA response against DNS rebinding. This token is available to anyone who can fetch the SPA and does not replace authentication at the reverse proxy.

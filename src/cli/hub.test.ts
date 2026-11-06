@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { request } from 'node:http';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { hubCommand } from './hub.js';
 import { loadPaths } from '../hub/projects.js';
@@ -22,6 +23,7 @@ const envKeys = [
   'VANGUARD_HUB_ALLOW_ADD',
   'VANGUARD_HUB_WATCH_POLL',
   'VANGUARD_HUB_WATCH_INTERVAL_MS',
+  'VANGUARD_HUB_ALLOWED_HOSTS',
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -54,6 +56,32 @@ function command(overrides: Partial<HubCommand> = {}): HubCommand {
 }
 
 describe('hubCommand', () => {
+  test('passes CLI and environment allowed Hosts to the server', async () => {
+    process.env.VANGUARD_HUB_ALLOWED_HOSTS = ' env.example, ';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await hubCommand(command({ allowedHosts: ['cli.example'] }));
+      const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
+      const url = line.slice('Vanguard Hub → '.length);
+      for (const host of ['cli.example', 'env.example']) {
+        // node:http preserves an explicit Host (fetch implementations may replace it).
+        const status = await new Promise<number | undefined>((resolve, reject) => {
+          const req = request(url + '/healthz', { headers: { host } }, (res) => {
+            res.resume();
+            res.on('end', () => resolve(res.statusCode));
+          });
+          req.on('error', reject);
+          req.end();
+        });
+        expect(status).toBe(200);
+      }
+    } finally {
+      logSpy.mockRestore();
+      process.emit('SIGINT');
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  });
+
   test('a missing/unbuilt uiDir fails loudly, naming the build command', async () => {
     const emptyUiDir = await mkdtemp(join(tmpdir(), 'vanguard-hub-cli-empty-'));
     await expect(hubCommand(command({ uiDir: emptyUiDir }))).rejects.toThrow(/pnpm --dir apps\/desktop build/);

@@ -11,6 +11,10 @@ import type { Command } from './args.js';
 
 const LOOPBACK_HOSTS = ['127.0.0.1', '::1', 'localhost'];
 
+function parseHostList(raw: string | undefined): string[] {
+  return (raw ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+}
+
 /** `src/cli/hub.ts` -> package root, whether running under tsx (src/) or built (dist/) — both
  * mirror the same two-levels-up depth from rootDir/outDir. */
 function pkgRoot(): string {
@@ -65,11 +69,10 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
 
   const hub = createHubServer({
     uiDir,
+    allowedHosts: [...(command.allowedHosts ?? []), ...parseHostList(process.env.VANGUARD_HUB_ALLOWED_HOSTS)],
     configDir,
     browseRoot: process.env.VANGUARD_HUB_BROWSE_ROOT ?? homedir(),
-    ...(process.env.VANGUARD_HUB_CLONE_HOSTS
-      ? { cloneHosts: process.env.VANGUARD_HUB_CLONE_HOSTS.split(',').map((h) => h.trim()).filter(Boolean) }
-      : {}),
+    ...(process.env.VANGUARD_HUB_CLONE_HOSTS ? { cloneHosts: parseHostList(process.env.VANGUARD_HUB_CLONE_HOSTS) } : {}),
     bind: {
       isLoopback,
       allowAdd: process.env.VANGUARD_HUB_ALLOW_ADD === '1',

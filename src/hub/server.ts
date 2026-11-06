@@ -2,12 +2,13 @@
 // (events.ts) and the static SPA server (static.ts) behind one listener. Same-origin only — this
 // never emits Access-Control-Allow-Origin, so a page on another origin cannot read responses even
 // if it can trigger the request.
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { serveStatic } from './static.js';
 import { EventBus } from './events.js';
 import { writeJson, jsonError } from './json-response.js';
 import { dispatchRpc, classifyError, type RpcContext } from './rpc.js';
-import { encodeError, encodeResult } from '../hub-wire.js';
+import { encodeError, encodeResult, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM } from '../hub-wire.js';
 import { ProjectAllowlist, type BindOptions } from './allowlist.js';
 import { WatchRegistry, type WatchOptions } from './watch.js';
 import { createRunSession } from './run-session.js';
@@ -37,15 +38,29 @@ export interface HubServerOptions {
   watch?: WatchOptions;
   deps?: SidecarDeps;
   spawnComplete?: SpawnComplete;
+  /** Extra permitted `Host` header values (`host[:port]`, exact match, case-insensitive) beyond the
+   * default loopback set for the actual bound port — `--allowed-host` / `VANGUARD_HUB_ALLOWED_HOSTS`,
+   * for the VPS / reverse-proxy deployment (docs/hub.md). */
+  allowedHosts?: readonly string[];
 }
 
 export interface HubServer {
   readonly server: Server;
   readonly eventBus: EventBus;
   readonly allowlist: ProjectAllowlist;
+  /** Per-launch secret `/rpc/*` and `/events` require. Never logged, never returned by
+   * `/healthz` — only `src/hub/static.ts` embeds it, in the SPA response, for the browser to read back. */
+  readonly token: string;
   listen(port: number, host: string): Promise<void>;
   /** Graceful shutdown: ends every SSE client, stops project watchers, then closes the listener. */
   close(): Promise<void>;
+}
+
+function tokenOk(candidate: string | null | undefined, token: string): boolean {
+  if (typeof candidate !== 'string') return false;
+  const bytes = Buffer.from(candidate);
+  const expected = Buffer.from(token);
+  return bytes.length === expected.length && timingSafeEqual(bytes, expected);
 }
 
 function notFound(res: ServerResponse): void {
@@ -162,9 +177,20 @@ async function handleRequest(
   ctx: RpcContext,
   eventBus: EventBus,
   opts: HubServerOptions,
+  token: string,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  const port = req.socket.localPort;
+  const hosts = new Set([
+    `localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`,
+    ...(port === 80 ? ['localhost', '127.0.0.1', '[::1]'] : []),
+    ...(opts.allowedHosts ?? []).map((host) => host.toLowerCase()),
+  ]);
+  if (!req.headers.host || !hosts.has(req.headers.host.toLowerCase())) {
+    jsonError(res, 403, 'Host not allowed', 'bad-request');
+    return;
+  }
   const url = new URL(req.url ?? '/', 'http://hub.local');
   const pathname = url.pathname;
 
@@ -176,6 +202,10 @@ async function handleRequest(
 
   if (pathname === '/events') {
     if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
+    if (!tokenOk(url.searchParams.get(HUB_TOKEN_QUERY_PARAM), token)) {
+      jsonError(res, 401, 'invalid hub token', 'bad-request');
+      return;
+    }
     eventBus.subscribe(req, res);
     res.flushHeaders();
     return;
@@ -183,6 +213,10 @@ async function handleRequest(
 
   if (pathname.startsWith('/rpc/')) {
     if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
+    if (!tokenOk(singleHeader(req.headers[HUB_TOKEN_HEADER]), token)) {
+      jsonError(res, 401, 'invalid hub token', 'bad-request');
+      return;
+    }
     await handleRpcRequest(ctx, req, res, pathname.slice('/rpc/'.length));
     return;
   }
@@ -192,12 +226,13 @@ async function handleRequest(
     return;
   }
 
-  const handled = await serveStatic({ uiDir: opts.uiDir }, req, res);
+  const handled = await serveStatic({ uiDir: opts.uiDir, token }, req, res);
   if (!handled) notFound(res);
 }
 
 /** Build (but do not start) the hub's HTTP server. `listen`/`close` drive its lifecycle. */
 export function createHubServer(opts: HubServerOptions): HubServer {
+  const token = randomBytes(32).toString('hex');
   const deps = opts.deps ?? productionDeps();
   const eventBus = new EventBus();
   eventBus.startKeepalive();
@@ -221,7 +256,7 @@ export function createHubServer(opts: HubServerOptions): HubServer {
   };
 
   const server = createServer((req, res) => {
-    void handleRequest(ctx, eventBus, opts, req, res).catch(() => {
+    void handleRequest(ctx, eventBus, opts, token, req, res).catch(() => {
       if (res.headersSent) res.destroy();
       else jsonError(res, 500, 'internal server error', 'internal');
     });
@@ -229,6 +264,7 @@ export function createHubServer(opts: HubServerOptions): HubServer {
 
   return {
     server,
+    token,
     eventBus,
     allowlist,
     listen: (port, host) =>

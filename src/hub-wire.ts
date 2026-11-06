@@ -14,6 +14,12 @@
  * invoke/listen. */
 export const HUB_MARKER = '<script>window.__VANGUARD_HUB__=true</script>';
 
+/** Per-launch auth token (src/hub/server.ts), carried on every `/rpc/*` request as this header and
+ * on `/events` (an `EventSource` cannot set headers) as this query parameter. Both sides read the
+ * same two names from here so they cannot drift. */
+export const HUB_TOKEN_HEADER = 'x-vanguard-hub-token';
+export const HUB_TOKEN_QUERY_PARAM = 'token';
+
 /** `BadRequestError`/`FlowError`/`VanguardError` are caller-correctable (`bad-request`); anything
  * else is a real fault (`internal`) — `src/hub/rpc.ts`'s `classifyError` is the one place that maps
  * a thrown value to this vocabulary. */
