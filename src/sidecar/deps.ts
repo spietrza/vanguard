@@ -22,6 +22,7 @@ import { agentAuthFromEnv } from '../agents/auth.js';
 import { BadRequestError } from './sidecar.js';
 import { AgentError } from '../core/errors.js';
 import type { ProviderChoice } from '../agents/registry.js';
+import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { RunEvent } from '../pipeline/events.js';
@@ -48,6 +49,36 @@ async function resolveRunChoice(params: CreateRunParams): Promise<ProviderChoice
     throw error;
   }
   return choice;
+}
+
+/**
+ * Why this run's credential sits in the sandbox rather than behind the proxy, phrased for the run view,
+ * or undefined when nothing is exposed. The user never asked for the proxy to be off, so without an
+ * advisory the exposure is invisible. At most one reason is reported — a subscription credential is the
+ * more specific exposure, and it stays in the sandbox even when the proxy is on for the implementer's own.
+ */
+function exposureReason(opts: {
+  provider: string | undefined;
+  subscriptionProvider: string | undefined;
+  proxySupported: boolean;
+  llmProxy: boolean;
+}): string | undefined {
+  const { subscriptionProvider, proxySupported, llmProxy } = opts;
+  if (subscriptionProvider !== undefined) {
+    return `${subscriptionProvider}'s subscription credential is not covered by the LLM proxy and is visible`;
+  }
+  if (llmProxy) return undefined;
+  const implementer = opts.provider ?? 'claude';
+  if (!proxySupported) {
+    return `${implementer} runs in direct mode, which the LLM proxy cannot cover, so its credential is visible`;
+  }
+  // No env var is named here on purpose: exporting CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY does
+  // NOT turn the proxy on for this run (needsAnthropicAuth is false, so the run never reads one),
+  // and naming them would advertise a remedy that silently does nothing.
+  return (
+    `${implementer} authenticates with its own API key, which the LLM proxy's trusted sidecar cannot hold ` +
+    `(this run consumes no Anthropic-family credential for a sidecar to front), so that key is visible`
+  );
 }
 
 /** Env-derived required linear deps (mirrors run.ts `linearDeps`): key + skills dir + repo path. */
@@ -178,38 +209,37 @@ export function productionDeps(): SidecarDeps {
       // verbatim regardless of llmProxy (providerSecrets forwards it before consulting proxyMode) —
       // the proxy offers it no protection.
       const subscriptionProvider = subscriptionCredentialProvider(choice);
-      // A direct-mode-only provider (meridian, a repo custom) cannot run under the proxy at all, so its
-      // key goes into the sandbox too — same user-visible consequence, different reason. The sidecar's
-      // choice carries an implementer and nothing else, so that provider IS the ineligible one (the
-      // reviewer/fallback combinations `llmProxySupported` also rejects cannot arise here).
+      // A direct-mode-only provider (meridian, a repo custom) cannot run under the proxy at all. The
+      // sidecar's choice carries an implementer and nothing else, so that provider IS the ineligible
+      // one (the reviewer/fallback combinations `llmProxySupported` also rejects cannot arise here).
       const proxySupported = llmProxySupported(choice);
-      const directOnlyProvider = proxySupported ? undefined : (provider ?? 'claude');
-      // The hub always wants the credential OUT of the sandbox: attempt --llm-proxy for any choice
-      // structurally eligible for it (same combinations the CLI accepts) — there is no hub/sidecar
-      // knob to turn this off for an eligible choice (see docs/hub.md) — UNLESS the only credential left
-      // to protect is a subscription one the proxy can't touch anyway AND the run has no Anthropic-family
-      // credential a primary sidecar could hold (`auth`). A Codex-subscription run is that case: `auth` is
-      // undefined whether or not a Claude token is exported (a codex-only run consumes none), and forcing
-      // the proxy on would both fail for want of a credential nobody needs and drop api.openai.com from
-      // the sandbox allowlist with no key in the OpenAI sidecar to forward with. It must still start.
-      const llmProxy = proxySupported && (subscriptionProvider === undefined || auth !== undefined);
+      // The hub always wants the credential OUT of the sandbox, and there is no hub/sidecar knob to turn
+      // that off (see docs/hub.md) — but the proxy's primary sidecar is the thing that HOLDS a credential,
+      // so it needs one: `auth` is the Anthropic-family credential (or zai/openrouter's key riding the
+      // same slot) it would hold. Without it startSandboxContext refuses, so a run that consumes no such
+      // credential — codex or cursor on their own API key, with or without a Claude token exported, since
+      // needsAnthropicAuth is false there — must run direct rather than not at all.
+      const llmProxy = proxySupported && auth !== undefined;
       const signal = beginRun();
-      const ctx = await startSandboxContext({
-        egress: true,
-        llmProxy,
-        ...(auth !== undefined ? { auth } : {}),
-        ...(provider !== undefined ? { provider } : {}),
-        ...(extraEgressHosts.length > 0 ? { extraEgressHosts } : {}),
-      });
-      // Whatever the reason the proxy is not holding this run's credential, say it out loud: the user
-      // never asked for the proxy to be off, so without an advisory the sandbox exposure is invisible.
-      // At most one reason is reported — a subscription credential is the more specific exposure.
-      const exposed =
-        subscriptionProvider !== undefined
-          ? `${subscriptionProvider}'s subscription credential is not covered by the LLM proxy and is visible`
-          : directOnlyProvider !== undefined
-            ? `${directOnlyProvider} runs in direct mode, which the LLM proxy cannot cover, so its credential is visible`
-            : undefined;
+      let ctx: SandboxContext;
+      try {
+        ctx = await startSandboxContext({
+          egress: true,
+          llmProxy,
+          ...(auth !== undefined ? { auth } : {}),
+          ...(provider !== undefined ? { provider } : {}),
+          ...(extraEgressHosts.length > 0 ? { extraEgressHosts } : {}),
+        });
+      } catch (error) {
+        // The controller is armed from beginRun() on, and the `finally` below only covers the region
+        // after the context exists: a throw while provisioning must disarm it too, so no stale armed
+        // controller outlives the failed run. The fault itself is rethrown as-is — everything
+        // startSandboxContext raises is a SandboxError, which classifyCoreError already reports
+        // bad-request, so wrapping could only relabel a genuine internal fault as a caller mistake.
+        endRun();
+        throw error;
+      }
+      const exposed = exposureReason({ provider, subscriptionProvider, proxySupported, llmProxy });
       if (exposed !== undefined) {
         onEvent({ type: 'warning', message: `${exposed} to the agent inside the sandbox for this run.` });
       }

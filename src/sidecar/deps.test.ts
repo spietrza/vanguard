@@ -31,6 +31,7 @@ vi.mock('../runners/github.js', () => ({
 
 const { productionDeps } = await import('./deps.js');
 const { BadRequestError } = await import('./sidecar.js');
+const { SandboxError } = await import('../core/errors.js');
 
 async function repoWith(customProviders: unknown): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), 'vg-deps-'));
@@ -57,6 +58,7 @@ function setEnv(vars: Record<string, string | undefined>): void {
 
 beforeEach(() => {
   beginRun.mockClear();
+  endRun.mockClear();
   startSandboxContext.mockClear();
   githubDepsFromEnv.mockClear();
   runGithubIssue.mockClear();
@@ -190,5 +192,59 @@ describe('createRun always runs with the LLM proxy (#584)', () => {
     expect(events.filter((e) => e.type === 'warning')).toEqual([
       { type: 'warning', message: expect.stringContaining('my-proxy') },
     ]);
+  });
+
+  // The regression the always-on rule has to avoid: codex/cursor on an API key consume no
+  // Anthropic-family credential (needsAnthropicAuth is false → `auth` undefined), and the proxy's
+  // primary sidecar refuses to start without one. Forcing the proxy on would make these runs
+  // unstartable, so they run direct, with the advisory naming the provider.
+  for (const [provider, env] of [
+    ['codex', { CODEX_API_KEY: 'sk-codex' }],
+    ['codex', { OPENAI_API_KEY: 'sk-openai' }],
+    ['cursor', { CURSOR_API_KEY: 'sk-cursor' }],
+  ] as const) {
+    it(`${provider} on ${Object.keys(env)[0]} starts (direct) and warns, instead of failing for want of a sidecar credential`, async () => {
+      const repoPath = await plainRepo();
+      const deps = productionDeps();
+      const events: RunEvent[] = [];
+      setEnv({ ...NO_CLAUDE, CODEX_AUTH_JSON: undefined, ...env });
+      await expect(
+        deps.createRun({ issueRef: 'o/r#1', repoPath, provider }, (e) => events.push(e)),
+      ).resolves.toEqual({ prUrl: 'https://example/pr/1' });
+      expect(startSandboxContext).toHaveBeenCalledWith(expect.objectContaining({ egress: true, llmProxy: false }));
+      // The API-key branch, not the subscription or direct-mode one: those would name the wrong reason.
+      expect(events.filter((e) => e.type === 'warning')).toEqual([
+        { type: 'warning', message: expect.stringContaining(`${provider} authenticates with its own API key`) },
+      ]);
+    });
+  }
+
+  it("a zai run is proxied on zai's own key: the primary sidecar holds it, no Claude credential needed", async () => {
+    const repoPath = await plainRepo();
+    const deps = productionDeps();
+    const events: RunEvent[] = [];
+    setEnv({ ...NO_CLAUDE, ZAI_API_KEY: 'zai-REAL-KEY' });
+    await expect(
+      deps.createRun({ issueRef: 'o/r#1', repoPath, provider: 'zai' }, (e) => events.push(e)),
+    ).resolves.toEqual({ prUrl: 'https://example/pr/1' });
+    expect(startSandboxContext).toHaveBeenCalledWith(expect.objectContaining({ llmProxy: true, provider: 'zai' }));
+    expect(events.filter((e) => e.type === 'warning')).toEqual([]); // nothing exposed → nothing to warn about
+    expect(JSON.stringify(runGithubIssue.mock.calls)).not.toContain('zai-REAL-KEY');
+  });
+
+  it('a failed dispatch disarms the cancel controller and surfaces the fault unchanged', async () => {
+    const repoPath = await plainRepo();
+    const deps = productionDeps();
+    setEnv({ ...NO_CLAUDE, CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01' });
+    // Every docker/enclave fault startSandboxContext raises is a SandboxError, which classifyCoreError
+    // already reports bad-request: passed through, not re-wrapped (re-wrapping would relabel a genuine
+    // internal fault as a caller mistake).
+    startSandboxContext.mockRejectedValueOnce(new SandboxError('Failed to start egress enclave'));
+    await expect(deps.createRun({ issueRef: 'o/r#1', repoPath }, () => {})).rejects.toBeInstanceOf(SandboxError);
+    // The controller is armed by then and the run's `finally` never runs, so the catch must disarm it:
+    // no stale armed controller outlives the failed run.
+    expect(beginRun).toHaveBeenCalledOnce();
+    expect(endRun).toHaveBeenCalledOnce();
+    expect(runGithubIssue).not.toHaveBeenCalled();
   });
 });

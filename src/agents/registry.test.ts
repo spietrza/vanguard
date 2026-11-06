@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { isProviderName, makeProvider, providerSecrets, providerUpstream, selectAgents, validateProviderChoice, PROVIDER_NAMES } from './registry.js';
+import {
+  isProviderName,
+  llmProxySupported,
+  makeProvider,
+  providerSecrets,
+  providerUpstream,
+  selectAgents,
+  subscriptionCredentialProvider,
+  validateProviderChoice,
+  PROVIDER_NAMES,
+} from './registry.js';
+import type { CustomProviderEntry } from './registry.js';
 
 describe('isProviderName', () => {
   it('accepts known providers and rejects others', () => {
@@ -350,6 +361,58 @@ describe('validateProviderChoice', () => {
     expect(() => selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env2, { proxyMode: true })).toThrow(
       /needs "zai" as the implementer/,
     );
+  });
+});
+
+describe('llmProxySupported', () => {
+  const CUSTOM: CustomProviderEntry[] = [
+    { index: 0, name: 'my-proxy', spec: { name: 'my-proxy', baseUrl: 'https://llm.example.com', keyEnv: 'MY_PROXY_API_KEY' } },
+  ];
+
+  it('true for every choice --llm-proxy accepts (claude, codex, zai implementing, codex reviewing zai)', () => {
+    expect(llmProxySupported({})).toBe(true);
+    expect(llmProxySupported({ provider: 'claude' })).toBe(true);
+    expect(llmProxySupported({ provider: 'codex' })).toBe(true);
+    expect(llmProxySupported({ provider: 'cursor' })).toBe(true);
+    expect(llmProxySupported({ provider: 'zai' })).toBe(true);
+    expect(llmProxySupported({ provider: 'zai', reviewProvider: 'codex' })).toBe(true);
+  });
+
+  it('false for proxy-specific ineligibility: direct-only providers, and a primary-sidecar owner in a secondary role', () => {
+    expect(llmProxySupported({ provider: 'meridian' })).toBe(false);
+    expect(llmProxySupported({ provider: 'my-proxy', customProviders: CUSTOM })).toBe(false);
+    expect(llmProxySupported({ provider: 'codex', reviewProvider: 'meridian' })).toBe(false);
+    expect(llmProxySupported({ provider: 'codex', reviewProvider: 'zai' })).toBe(false);
+    expect(llmProxySupported({ provider: 'codex', fallbackProvider: 'zai' })).toBe(false);
+  });
+
+  it('RETHROWS what is wrong with the choice regardless of the proxy, instead of reporting "unsupported"', () => {
+    // A caller that reads false runs direct; swallowing these would turn a run-stopping misconfiguration
+    // into a silently different run.
+    expect(() => llmProxySupported({ provider: 'claude', reviewProvider: 'zai' })).toThrow(/cannot mix "claude" and "zai"/);
+    expect(() => llmProxySupported({ provider: 'claude', fallbackProvider: 'claude' })).toThrow(/is the implementer itself/);
+    expect(() => llmProxySupported({ provider: 'bogus' })).toThrow(/Unknown provider "bogus"/);
+    expect(() => llmProxySupported({ provider: 'bad', customProviders: [{ index: 0, name: 'bad', error: 'customProviders[0]: broken' }] })).toThrow(
+      /customProviders\[0\]: broken/,
+    );
+  });
+});
+
+describe('subscriptionCredentialProvider', () => {
+  const SUB = { CODEX_AUTH_JSON: '{"tokens":{}}' } as NodeJS.ProcessEnv;
+
+  it('names the used provider whose subscription credential is set', () => {
+    expect(subscriptionCredentialProvider({ provider: 'codex' }, SUB)).toBe('codex');
+    // Every role counts, not just the implementer: the credential lands in the same sandbox.
+    expect(subscriptionCredentialProvider({ provider: 'claude', reviewProvider: 'codex' }, SUB)).toBe('codex');
+    expect(subscriptionCredentialProvider({ provider: 'claude', fallbackProvider: 'codex' }, SUB)).toBe('codex');
+  });
+
+  it('undefined when no used provider has one set: unset, empty, or simply not selected', () => {
+    expect(subscriptionCredentialProvider({ provider: 'codex' }, {})).toBeUndefined();
+    expect(subscriptionCredentialProvider({ provider: 'codex' }, { CODEX_AUTH_JSON: '' })).toBeUndefined();
+    expect(subscriptionCredentialProvider({ provider: 'claude' }, SUB)).toBeUndefined(); // codex not in the run
+    expect(subscriptionCredentialProvider({ provider: 'cursor' }, SUB)).toBeUndefined(); // no subscriptionEnv at all
   });
 });
 

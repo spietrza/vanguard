@@ -538,8 +538,14 @@ export function assertEgressCompatible(choice: ProviderChoice): void {
  * as reviewer-only or fallback while a different provider implements — the same combinations
  * `validateProviderChoice({ proxyMode: true })` rejects. Callers that auto-enable the proxy (the hub)
  * use this to decide whether to even attempt it, instead of surfacing the AgentError to the caller.
+ *
+ * Only proxy-specific ineligibility answers false: everything wrong with the choice REGARDLESS of the
+ * proxy — an unknown or broken provider name, a transport collision — still throws, so a caller that
+ * reads false and runs direct can never swallow one of those.
  */
 export function llmProxySupported(choice: ProviderChoice): boolean {
+  assertProvidersResolvable(choice);
+  validateProviderChoice(choice, {});
   try {
     validateProviderChoice(choice, { proxyMode: true });
     return true;

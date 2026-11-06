@@ -50,18 +50,23 @@ This opens a browser at the printed URL.
 
 ## Runs always use the LLM proxy
 
-Every run started from the hub runs with the LLM proxy for providers that support it: a trusted
-sidecar on the host holds the real provider credential and the sandbox gets a per-run nonce instead,
-so agent code never sees the token. Unlike the CLI's opt-in `--llm-proxy`, the hub has **no switch to
-turn this off** — no flag, no env var, no `.vanguard/app.json` setting.
+Every run started from the hub runs with the LLM proxy whenever the run has a credential the proxy's
+trusted sidecar can hold — a Claude subscription token or `ANTHROPIC_API_KEY`, or z.ai's / OpenRouter's
+key when that provider implements. The sidecar on the host keeps the real credential and the sandbox
+gets a per-run nonce instead, so agent code never sees the token. Unlike the CLI's opt-in
+`--llm-proxy`, the hub has **no switch to turn this off** — no flag, no env var, no
+`.vanguard/app.json` setting.
 
-Two kinds of provider run without it. There the credential *is* in the sandbox, so the run view shows
-a warning naming the provider rather than leaving the exposure silent:
+Three kinds of run go without it. There the credential *is* in the sandbox, so the run view shows a
+warning naming the provider rather than leaving the exposure silent:
 
 - **Codex on a ChatGPT subscription** (`CODEX_AUTH_JSON`). The credential is forwarded into the
   sandbox verbatim — Codex talks to the ChatGPT backend directly with it, which the proxy does not
-  cover. The run still starts; tracked in #585. Use `CODEX_API_KEY`/`OPENAI_API_KEY` instead to keep
-  the credential out of the sandbox.
+  cover. The run still starts; tracked in #585.
+- **Codex or Cursor on their own API key** (`CODEX_API_KEY`/`OPENAI_API_KEY`, `CURSOR_API_KEY`). Such a
+  run consumes no Anthropic-family credential, so the proxy's primary sidecar has nothing to hold and
+  cannot start; exporting `CLAUDE_CODE_OAUTH_TOKEN` as well does not change that, because the run never
+  uses it. The key is injected into the sandbox and the run starts.
 - **Direct-mode-only providers** — Meridian ([MERIDIAN-provider.md](MERIDIAN-provider.md)) and repo
   custom providers (`.vanguard/app.json` `customProviders`). They point the Claude CLI at their own
   endpoint and authenticate on that host, exposing no upstream a sidecar could target, so their key
