@@ -58,7 +58,7 @@ function langfusePath(endpoint: string): boolean {
 /**
  * Resolve the exporter from the host env; undefined = disabled (the default).
  *
- * Endpoint: VANGUARD_OTLP_ENDPOINT, else OTEL_EXPORTER_OTLP_ENDPOINT — the OTLP base
+ * Endpoint: VANGUARD_OTLP_ENDPOINT, else OTEL_EXPORTER_OTLP_ENDPOINT only with VANGUARD_OTEL=1 — the OTLP base
  * (`https://<langfuse>/api/public/otel` for Langfuse); `/v1/traces` is appended unless already there.
  * Auth, one of:
  * - LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY → `Authorization: Basic base64(pk:sk)` plus the
@@ -73,6 +73,9 @@ function langfusePath(endpoint: string): boolean {
  */
 export function otlpSinkConfig(env: NodeJS.ProcessEnv = process.env): OtlpSinkConfig | undefined {
   const own = env['VANGUARD_OTLP_ENDPOINT'];
+  // Explicit opt-in: VANGUARD_OTLP_ENDPOINT, or VANGUARD_OTEL=1 to reuse the generic OTEL_* vars. An
+  // inherited OTEL_EXPORTER_OTLP_* pair (endpoint + Authorization header) alone never starts an export.
+  if (own === undefined && env['VANGUARD_OTEL'] !== '1') return undefined;
   const endpoint = (own ?? env['OTEL_EXPORTER_OTLP_ENDPOINT'] ?? '').trim().replace(/\/+$/, '');
   if (endpoint === '') return undefined;
   const headers = parseHeaderList(env['VANGUARD_OTLP_HEADERS'] ?? env['OTEL_EXPORTER_OTLP_HEADERS'] ?? '');

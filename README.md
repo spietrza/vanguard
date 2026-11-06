@@ -724,7 +724,7 @@ Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metri
 
 | Variable | Value |
 | --- | --- |
-| `VANGUARD_OTLP_ENDPOINT` (or the standard `OTEL_EXPORTER_OTLP_ENDPOINT`) | OTLP base; for Langfuse `https://<your-langfuse>/api/public/otel` (`/v1/traces` is appended) |
+| `VANGUARD_OTLP_ENDPOINT` (or the standard `OTEL_EXPORTER_OTLP_ENDPOINT`, honored only with `VANGUARD_OTEL=1`, so an inherited host-wide OTel config never starts an export) | OTLP base; for Langfuse `https://<your-langfuse>/api/public/otel` (`/v1/traces` is appended) |
 | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` | a Langfuse project key pair — Basic auth and the `x-langfuse-ingestion-version: 4` real-time header are derived; used only for a Langfuse-shaped endpoint (`VANGUARD_OTLP_ENDPOINT`, or a path containing `/api/public/otel`), so a host-wide `OTEL_EXPORTER_OTLP_ENDPOINT` never receives them |
 | `VANGUARD_OTLP_HEADERS` (or `OTEL_EXPORTER_OTLP_HEADERS`) | alternative for any other collector: the OTel `k=v,k2=v2` list, which must include `Authorization=…` |
 
