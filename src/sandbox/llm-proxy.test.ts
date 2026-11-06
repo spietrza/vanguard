@@ -42,7 +42,9 @@ describe('startLlmProxy', () => {
     const flat = d.calls.flatMap((c) => c.args).join(' ');
     expect(flat).toMatch(/--label vanguard\.runId=/);
     expect(flat).toContain('node /tmp/llm-proxy.mjs');
-    expect(flat).toContain('LLM_PROXY_SECRET_FILE=/tmp/llm-proxy-secret');
+    expect(flat).toContain('LLM_PROXY_SECRET_FILE=/run/vanguard-llm/secret');
+    // The secret's directory is a dedicated tmpfs, not the container's writable layer.
+    expect(flat).toContain('--tmpfs /run/vanguard-llm:rw,noexec,nosuid,mode=1777,size=1m');
     expect(flat).toContain('PORT=8088');
     // The secret travels only via stdin, never via -e or argv.
     expect(flat).not.toContain('sk-ant-secret');
