@@ -15,6 +15,9 @@ export declare const UPSTREAMS: Record<Upstream, UpstreamSpec>;
 
 export declare const OAUTH_BETA: 'oauth-2025-04-20';
 
+/** The request's anthropic-beta minus blocked (egress-capable) feature families; undefined when none remain. */
+export declare function filterAnthropicBeta(incoming: string | string[] | undefined): string | undefined;
+
 /** Merge request anthropic-beta with an extra value, preserving order and deduping. */
 export declare function mergeAnthropicBeta(incoming: string | string[] | undefined, extra: string): string;
 

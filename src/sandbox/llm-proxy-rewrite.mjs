@@ -12,6 +12,46 @@ function betaToString(value) {
   return Array.isArray(value) ? value.join(',') : value;
 }
 
+/**
+ * anthropic-beta feature families the sidecar refuses to forward: each lets the upstream reach third-party
+ * servers on the sandbox's behalf (MCP connector, web fetch, tunnels) or keep state/run code outside the
+ * run (files, code execution, skills, batches, hosted agents/environments) — egress the sandbox
+ * allowlist cannot see. Matched on the family name, so a re-dated beta of the same family is still
+ * dropped. A denylist rather than an allowlist on purpose: Claude Code ships dozens of betas and adds
+ * new ones each release, and dropping an unknown one turns its request fields into upstream 400s.
+ */
+const BLOCKED_BETA_FAMILIES = [
+  'mcp-client',
+  'mcp-servers',
+  'mcp-tunnels',
+  'web-fetch',
+  'code-execution',
+  'files-api',
+  'skills',
+  'message-batches',
+  'managed-agents',
+  'environments',
+  'ccr-byoc',
+  'ccr-triggers',
+];
+
+/** A beta value's family: the name without its trailing `-YYYY-MM-DD` date. */
+function betaFamily(value) {
+  return value.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+}
+
+/**
+ * The request's anthropic-beta with blocked families removed (trimmed, comma-joined); undefined when
+ * nothing is left, so the caller omits the header.
+ */
+export function filterAnthropicBeta(incoming) {
+  const kept = (betaToString(incoming) ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '' && !BLOCKED_BETA_FAMILIES.includes(betaFamily(s.toLowerCase())));
+  return kept.length > 0 ? kept.join(',') : undefined;
+}
+
 /** Merge request anthropic-beta with an extra value, preserving order and deduping. */
 export function mergeAnthropicBeta(incoming, extra) {
   const parts = (betaToString(incoming) ?? '')
@@ -28,11 +68,11 @@ export function mergeAnthropicBeta(incoming, extra) {
  * api => x-api-key, no oauth beta.
  */
 export function upstreamAuthHeaders(auth, reqHeaders) {
-  const beta = betaToString(reqHeaders['anthropic-beta']);
+  const beta = filterAnthropicBeta(reqHeaders['anthropic-beta']);
   if (auth.mode === 'subscription') {
     return { authorization: `Bearer ${auth.secret}`, 'anthropic-beta': mergeAnthropicBeta(beta, OAUTH_BETA) };
   }
-  // api mode: x-api-key, no oauth beta; pass through the request's anthropic-beta unchanged if present.
+  // api mode: x-api-key, no oauth beta; pass through the request's (filtered) anthropic-beta if present.
   return { 'x-api-key': auth.secret, ...(beta !== undefined ? { 'anthropic-beta': beta } : {}) };
 }
 

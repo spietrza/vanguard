@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mergeAnthropicBeta,
+  filterAnthropicBeta,
   upstreamAuthHeaders,
   openaiAuthHeaders,
   isAllowedLlmPath,
@@ -22,6 +23,26 @@ describe('mergeAnthropicBeta', () => {
   it('coerces an array input to a comma-joined string', () => {
     expect(mergeAnthropicBeta(['foo', 'bar'], 'oauth-2025-04-20')).toBe('foo,bar,oauth-2025-04-20');
     expect(mergeAnthropicBeta(['oauth-2025-04-20'], 'oauth-2025-04-20')).toBe('oauth-2025-04-20');
+  });
+});
+
+describe('filterAnthropicBeta', () => {
+  it('keeps the betas Claude Code sends for normal runs', () => {
+    const cc = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24';
+    expect(filterAnthropicBeta(cc)).toBe(cc);
+  });
+  it('drops egress-capable families, including re-dated and mixed-case variants', () => {
+    expect(filterAnthropicBeta('mcp-client-2025-04-04,foo,web-fetch-2025-09-10,Files-API-2025-04-14,code-execution-2099-01-01')).toBe('foo');
+    expect(filterAnthropicBeta(['mcp-servers-2025-12-04', 'skills-2025-10-02'])).toBeUndefined();
+  });
+  it('does not drop a family that merely shares a prefix', () => {
+    expect(filterAnthropicBeta('skills-extra-2026-01-01')).toBe('skills-extra-2026-01-01');
+  });
+  it('blocked betas never reach the upstream in either auth mode', () => {
+    const req = { 'anthropic-beta': 'mcp-client-2025-04-04,foo' };
+    expect(upstreamAuthHeaders({ mode: 'subscription', secret: 'oat' }, req)['anthropic-beta']).toBe('foo,oauth-2025-04-20');
+    expect(upstreamAuthHeaders({ mode: 'api', secret: 'sk' }, req)['anthropic-beta']).toBe('foo');
+    expect('anthropic-beta' in upstreamAuthHeaders({ mode: 'api', secret: 'sk' }, { 'anthropic-beta': 'web-fetch-2025-09-10' })).toBe(false);
   });
 });
 
