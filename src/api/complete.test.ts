@@ -1,5 +1,5 @@
-import { test, expect } from 'vitest';
-import { runComplete } from './complete.js';
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { runComplete, type CompleteDeps } from './complete.js';
 
 /** A fake agent-SDK query() yielding a fixed message stream. */
 function fakeQuery(...msgs: { type: string; subtype?: string; result?: string }[]) {
@@ -223,4 +223,70 @@ test('fenced inlining is fence-safe: content with a ``` run gets a longer fence 
   );
   // The wrapping fence must be longer than the ``` inside so the block can't be broken out of.
   expect(String(prompt)).toContain('````'); // 4+ backticks
+});
+
+describe('chatBaseUrl origin allowlist', () => {
+  const ENV = 'VANGUARD_CHAT_ALLOWED_ORIGINS';
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env[ENV];
+    delete process.env[ENV];
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[ENV];
+    else process.env[ENV] = saved;
+  });
+
+  /** Records each SDK call's ANTHROPIC_BASE_URL (undefined when no env override was passed). */
+  function recorder(): { query: CompleteDeps['query']; calls: (string | undefined)[] } {
+    const calls: (string | undefined)[] = [];
+    const query: CompleteDeps['query'] = (params) => {
+      const env = params.options?.['env'] as Record<string, string> | undefined;
+      calls.push(env?.['ANTHROPIC_BASE_URL']);
+      return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+    };
+    return { query, calls };
+  }
+
+  test('a foreign origin is refused without an allowlist and the SDK is never called', async () => {
+    const rec = recorder();
+    const r = await runComplete({ messages: msg, baseUrl: 'https://collector.example/v1' }, rec);
+    expect(r.error?.message).toContain('https://collector.example');
+    expect(r.error?.message).toContain(ENV);
+    expect(rec.calls).toEqual([]);
+  });
+
+  test('a non-http(s) or malformed baseUrl is refused', async () => {
+    for (const bad of ['file:///etc/passwd', 'not a url', '']) {
+      const rec = recorder();
+      const r = await runComplete({ messages: msg, baseUrl: bad }, rec);
+      expect(r.error).toBeDefined();
+      expect(rec.calls).toEqual([]);
+    }
+  });
+
+  test('an origin the operator allowlisted is used', async () => {
+    process.env[ENV] = ' https://other.example , https://proxy.internal:8443/ ';
+    const rec = recorder();
+    const r = await runComplete({ messages: msg, baseUrl: 'https://proxy.internal:8443/anthropic' }, rec);
+    expect(r.text).toBe('ok');
+    expect(rec.calls).toEqual(['https://proxy.internal:8443/anthropic']);
+  });
+
+  test('the allowlist matches whole origins, not prefixes, other ports or schemes', async () => {
+    process.env[ENV] = 'https://proxy.internal';
+    for (const bad of ['https://proxy.internal.evil.example', 'https://proxy.internal:9999', 'http://proxy.internal']) {
+      const rec = recorder();
+      const r = await runComplete({ messages: msg, baseUrl: bad }, rec);
+      expect(r.error).toBeDefined();
+      expect(rec.calls).toEqual([]);
+    }
+  });
+
+  test('the Anthropic API origin and the no-baseUrl default are unaffected', async () => {
+    const rec = recorder();
+    expect((await runComplete({ messages: msg, baseUrl: 'https://api.anthropic.com' }, rec)).text).toBe('ok');
+    expect((await runComplete({ messages: msg }, rec)).text).toBe('ok');
+    expect(rec.calls).toEqual(['https://api.anthropic.com', undefined]);
+  });
 });
