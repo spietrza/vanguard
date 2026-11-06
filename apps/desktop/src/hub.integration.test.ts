@@ -203,7 +203,6 @@ beforeEach(async () => {
     browseRoot,
     bind: { isLoopback: true, allowAdd: false },
     seedRepoPath: repo,
-    version: '0.0.0-test',
     deps: unimplementedDeps(),
   });
   await hub.listen(0, '127.0.0.1');

@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -308,16 +308,15 @@ describe('hubCommand', () => {
     }
   });
 
-  test('GET /healthz answers with the package version, and SIGINT shuts the server down', async () => {
+  test('GET /healthz answers with a constant body, and SIGINT shuts the server down', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
     try {
       await hubCommand(command());
       const line = logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('Vanguard Hub → '));
       expect(line).toBeDefined();
       const url = new URL(line!.replace('Vanguard Hub → ', '')).origin;
       const res = await fetch(`${url}/healthz`);
-      expect(await res.json()).toEqual({ ok: true, version: pkg.version });
+      expect(await res.json()).toEqual({ ok: true });
 
       process.emit('SIGINT');
       await new Promise((r) => setTimeout(r, 50));
