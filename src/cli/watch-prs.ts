@@ -70,6 +70,7 @@ export async function watchPrsCommand(cmd: WatchPrsCommand, deps: WatchPrsComman
     log,
     ...(hintPr !== undefined ? { hintPr } : {}),
     ...(cmd.author !== undefined ? { author: cmd.author } : {}),
+    ...(cmd.feedbackAuthors !== undefined ? { allowedAuthors: cmd.feedbackAuthors } : {}),
     ...(deps.gh !== undefined ? { gh: deps.gh } : {}),
     reviewOne: (item) =>
       reviewPr({

@@ -1,4 +1,6 @@
 import { escapePromptTags } from '../context/escape.js';
+import { trustedComments } from './comment-trust.js';
+import type { TrustOptions } from './comment-trust.js';
 
 /** A child (sub-issue) of a task; identifier and title only (sub-issues carry no body in list shape). */
 export interface SubTask {
@@ -49,13 +51,26 @@ export interface TaskFetcher {
   list: (filter?: TaskFilter) => Promise<Task[]>;
 }
 
-/** Map a fetched task to prompt-engine {{KEY}} variables. */
-export function taskToVariables(task: Task): Record<string, string> {
+/**
+ * One comment as a delimited block. The author comes from the fetched login, escaped (quotes too), and
+ * the body is escaped, so a body cannot close the block or forge another author's comment.
+ */
+function renderComment(comment: TaskComment): string {
+  const author = escapePromptTags(comment.author).replaceAll('"', '&quot;');
+  return `<comment author="${author}">\n${escapePromptTags(comment.body)}\n</comment>`;
+}
+
+/**
+ * Map a fetched task to prompt-engine {{KEY}} variables. COMMENTS carries only trustedComments (repo
+ * members, the issue author, `trust.allowedAuthors`, Vanguard's bot): an outsider's comment never
+ * reaches the agent prompt.
+ */
+export function taskToVariables(task: Task, trust: TrustOptions = {}): Record<string, string> {
   return {
     TITLE: escapePromptTags(task.title),
     DESCRIPTION: escapePromptTags(task.description),
     LABELS: task.labels.map((label) => escapePromptTags(label)).join(', '),
     SUBTASKS: task.children.map((child) => escapePromptTags(`${child.id} ${child.title}`)).join('\n'),
-    COMMENTS: escapePromptTags(task.comments.map((comment) => `${comment.author}: ${comment.body}`).join('\n')),
+    COMMENTS: trustedComments(task, trust).map(renderComment).join('\n'),
   };
 }

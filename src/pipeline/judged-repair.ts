@@ -1,5 +1,6 @@
 import { runAgent } from '../core/vanguard.js';
 import { roundUsd } from '../core/usd.js';
+import { neutralizePromptTags } from '../context/escape.js';
 import type { RunContext, StageInput } from '../core/vanguard.js';
 import { makeFrozenRun } from './pipeline.js';
 import type { PipelineStage, PipelineResult, StageOutcome } from './pipeline.js';
@@ -89,7 +90,7 @@ export async function runJudgedRepair(ctx: RunContext, opts: JudgedRepairOptions
     const variables: Record<string, string> = {
       ...baseVariables,
       JUDGE_REASON: verdict.reason,
-      PREVIOUS_DIFF: result.diff ?? '',
+      PREVIOUS_DIFF: neutralizePromptTags(result.diff ?? ''),
       PREVIOUS_FINAL: result.finalText,
     };
     const repairBudget = maxCostUsd < Number.POSITIVE_INFINITY ? roundUsd(maxCostUsd - spentUsd) : undefined;

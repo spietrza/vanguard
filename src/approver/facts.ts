@@ -158,8 +158,9 @@ function peelReviewPrefix(body: string): string | undefined {
 /**
  * Select the review that speaks for the current content and extract its verdict. Candidates are
  * reviews in the external review format (see peelReviewPrefix) whose body carries exactly one
- * distinct marker SHA (zero = no marker, more than one = a planted marker, both rejected) and whose
- * author is on `policy.reviewAuthors` (an empty list accepts nobody); the latest `submittedAt` among
+ * distinct marker SHA (zero = no marker, more than one = a planted marker, both rejected), which was
+ * posted as a plain COMMENTED review, and whose author is exactly a login on `policy.reviewAuthors`
+ * (an empty list accepts nobody); the latest `submittedAt` among
  * survivors wins. Returns all-null when there is none.
  */
 export function collectReviewFacts(pr: PrFacts, policy: ApproverPolicy): ReviewFacts {
@@ -167,6 +168,9 @@ export function collectReviewFacts(pr: PrFacts, policy: ApproverPolicy): ReviewF
     const shas = [...new Set(pullRequestReviewMarkerShas(r.body))];
     const peeled = peelReviewPrefix(r.body);
     if (shas.length !== 1 || peeled === undefined) return [];
+    // The external review only ever posts with `gh pr review --comment`: an approval, a change request or a
+    // dismissed review in the same shape is some other writer (or a withdrawn verdict), never the verdict.
+    if (r.state !== 'COMMENTED') return [];
     if (!policy.reviewAuthors.includes(r.author)) return [];
     return [{ author: r.author, submittedAt: r.submittedAt, sha: shas[0]!, peeled }];
   });

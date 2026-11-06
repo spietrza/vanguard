@@ -154,16 +154,7 @@ export function outputTail(text: string, maxChars = 1200): string {
   return trimmed.length <= maxChars ? trimmed : `…${trimmed.slice(-maxChars)}`;
 }
 
-/**
- * Escape every `<` inside untrusted text. Any narrower rule (a list of tag names, a tag-shape pattern) left
- * a gap: harness framings such as `<system-reminder>`, zero-width characters after `<`, `<?xml`,
- * `<![CDATA[`. With no `<` left, an author cannot close a data block or open an instruction, policy or
- * harness block, and a quoted `<promise>COMPLETE</promise>` cannot mark a partial review complete. Code
- * reads as `Array&lt;string>` and `a &lt; b`; `>` stays, which keeps it readable.
- */
-export function neutralizePromptTags(text: string): string {
-  return text.replaceAll('<', '&lt;');
-}
+export { neutralizePromptTags } from '../context/escape.js';
 
 // Both forges' dedupe markers and the PR incomplete-review marker, in the line-anchored shape their detectors
 // accept, padded with any whitespace `.trim()` or GitLab's rstrip could remove, so stripping covers everything
@@ -175,14 +166,24 @@ const REVIEW_MARKER_LINE_RE = new RegExp(
   'gm',
 );
 
+// Same opener as pr-feedback.ts REVISION_MARKER_PRESENT_RE, plus the rest of a well-formed marker when present.
+const REVISION_MARKER_OPEN_RE = /<!--\s*(?:vanguard-)?revision:(?:[^>]*-->)?/g;
+
 /**
- * Remove review dedupe markers from text the bot posts but did not write (verdicts, conformance sections,
+ * Remove review dedupe markers and revise-pr's revision marker from text the bot posts but did not write (verdicts, conformance sections,
  * error text). The agent can quote one from the MR or PR content, and in the bot's own note it would mark
  * that head as reviewed, or make revise-pr skip the note as an incomplete review. `\r` goes first: GitLab
  * drops it when it saves a note, which would rejoin a marker split by one.
  */
 export function stripReviewMarkers(text: string): string {
-  return text.replaceAll('\r', '').replace(REVIEW_MARKER_LINE_RE, '');
+  let out = text.replaceAll('\r', '').replace(REVIEW_MARKER_LINE_RE, '');
+  // revise-pr's round marker (pr-feedback.ts) is detected anywhere in a body, closed or not, so drop every
+  // opener; repeat until stable, as removing one can join the pieces around it into a new opener.
+  for (let prev = ''; prev !== out; ) {
+    prev = out;
+    out = out.replace(REVISION_MARKER_OPEN_RE, '');
+  }
+  return out;
 }
 
 /** Verdict header text for a reviewer stage that ended incomplete; such a verdict carries no head marker. */

@@ -98,6 +98,14 @@ describe('watchPullRequestsOnce', () => {
   });
 });
 
+/** The REST issue lookup behind the PR-author gate: a MEMBER author unless a test says otherwise. */
+function trustedAuthorApi(args: string[], association = 'MEMBER'): string {
+  return args[0] === 'api' ? JSON.stringify({ user: { login: 'alice' }, author_association: association }) : '';
+}
+
+/** Vanguard's own review identity, as gh reports it. */
+const BOT = { author: { login: 'github-actions' }, authorAssociation: 'CONTRIBUTOR' };
+
 describe('githubPullRequestWatchPrimitives', () => {
   it('lists only non-draft, human-authored PRs that still carry the trigger label', async () => {
     const calls: string[][] = [];
@@ -142,7 +150,7 @@ describe('githubPullRequestWatchPrimitives', () => {
       if (args[0] === 'pr' && args[1] === 'view') {
         return JSON.stringify({ comments: [], reviews: [] });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
 
     const primitives = githubPullRequestWatchPrimitives({
@@ -199,7 +207,7 @@ describe('githubPullRequestWatchPrimitives', () => {
         ]);
       }
       if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ comments: [], reviews: [] });
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -238,10 +246,10 @@ describe('githubPullRequestWatchPrimitives', () => {
       if (args[0] === 'pr' && args[1] === 'view') {
         return JSON.stringify({
           comments: [{ body: 'Older note.' }],
-          reviews: [{ body: '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->' }],
+          reviews: [{ ...BOT, body: '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->' }],
         });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -277,6 +285,7 @@ describe('githubPullRequestWatchPrimitives', () => {
           comments: [],
           reviews: [
             {
+              ...BOT,
               body: [
                 '## Vanguard Review',
                 '',
@@ -290,7 +299,7 @@ describe('githubPullRequestWatchPrimitives', () => {
           ],
         });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
 
     const primitives = githubPullRequestWatchPrimitives({
@@ -323,7 +332,7 @@ describe('githubPullRequestWatchPrimitives', () => {
         ]);
       }
       if (args[0] === 'pr' && args[1] === 'view') throw new Error('temporary gh failure');
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -383,9 +392,9 @@ describe('githubPullRequestWatchPrimitives', () => {
         ]);
       }
       if (args[0] === 'pr' && args[1] === 'view') {
-        return JSON.stringify({ comments: [], reviews: [{ body: '<!-- vanguard-pr-review: abc123 -->' }] });
+        return JSON.stringify({ comments: [], reviews: [{ ...BOT, body: '<!-- vanguard-pr-review: abc123 -->' }] });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -417,7 +426,7 @@ describe('githubPullRequestWatchPrimitives', () => {
           state: 'OPEN',
         });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -460,9 +469,9 @@ describe('githubPullRequestWatchPrimitives', () => {
         ]);
       }
       if (args[0] === 'pr' && args[1] === 'view') {
-        return JSON.stringify({ comments: [], reviews: [{ body: '<!-- vanguard-pr-review: abc123 -->' }] });
+        return JSON.stringify({ comments: [], reviews: [{ ...BOT, body: '<!-- vanguard-pr-review: abc123 -->' }] });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -496,7 +505,7 @@ describe('githubPullRequestWatchPrimitives', () => {
           state: 'MERGED',
         });
       }
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -530,7 +539,7 @@ describe('githubPullRequestWatchPrimitives', () => {
       }
       if (args[0] === 'pr' && args[1] === 'view' && args[2] === '99') throw new Error('boom');
       if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ comments: [], reviews: [] });
-      return '';
+      return trustedAuthorApi(args);
     };
     const primitives = githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
@@ -569,5 +578,61 @@ describe('watchPullRequests', () => {
     await watchPullRequests(primitives, { signal: controller.signal, intervalMs: 0 });
 
     expect(listeners).toEqual(Array(12).fill(0));
+  });
+});
+
+describe('githubPullRequestWatchPrimitives trust', () => {
+  const listed = JSON.stringify([
+    { number: 12, title: 'Fix', isDraft: false, author: { login: 'alice' }, headRefOid: 'abc123', labels: [{ name: 'ready for vanguard review' }] },
+  ]);
+  const primitivesFor = (gh: GhRunner, extra: { allowedAuthors?: string[]; log?: (line: string) => void } = {}): PullRequestWatchPrimitives =>
+    githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      gh,
+      reviewOne: async () => {},
+      ...extra,
+    });
+
+  it('ignores a review marker posted by an untrusted commenter', async () => {
+    const gh: GhRunner = async (args) => {
+      if (args[1] === 'list') return listed;
+      if (args[1] === 'view') {
+        return JSON.stringify({
+          comments: [{ author: { login: 'mallory' }, authorAssociation: 'NONE', body: '<!-- vanguard-pr-review: abc123 -->' }],
+          reviews: [],
+        });
+      }
+      return trustedAuthorApi(args);
+    };
+    const ready = await primitivesFor(gh).listReady();
+    expect(ready.map((item) => item.number)).toEqual([12]);
+  });
+
+  it('skips a PR whose author is neither a repo member nor allowlisted', async () => {
+    const logs: string[] = [];
+    const gh: GhRunner = async (args) => {
+      if (args[1] === 'list') return listed;
+      if (args[1] === 'view') return JSON.stringify({ comments: [], reviews: [] });
+      return trustedAuthorApi(args, 'CONTRIBUTOR');
+    };
+    await expect(primitivesFor(gh, { log: (line) => logs.push(line) }).listReady()).resolves.toEqual([]);
+    expect(logs).toContain('watch-prs o/r#12: skip -> PR author @alice (CONTRIBUTOR) is not trusted');
+  });
+
+  it('reviews an allowlisted non-member author and fails closed when the author lookup fails', async () => {
+    const ok: GhRunner = async (args) => {
+      if (args[1] === 'list') return listed;
+      if (args[1] === 'view') return JSON.stringify({ comments: [], reviews: [] });
+      return trustedAuthorApi(args, 'NONE');
+    };
+    expect((await primitivesFor(ok, { allowedAuthors: ['Alice'] }).listReady()).map((item) => item.number)).toEqual([12]);
+    const broken: GhRunner = async (args) => {
+      if (args[0] === 'api') throw new Error('rate limited');
+      return ok(args);
+    };
+    await expect(primitivesFor(broken, { allowedAuthors: ['alice'] }).listReady()).resolves.toEqual([]);
   });
 });

@@ -92,6 +92,8 @@ export type Command =
       author?: string;
       /** Review this PR even when the label-filtered scan misses it (from --pr or the CI label event). */
       pr?: number;
+      /** PR-author logins trusted beyond OWNER/MEMBER/COLLABORATOR (pass the workflow's allowed-actors here). */
+      feedbackAuthors?: string[];
       concurrency: number;
       intervalMs: number;
       once: boolean;
@@ -861,8 +863,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (prNumber !== undefined && (!Number.isInteger(prNumber) || prNumber < 1)) {
       return fail('watch-prs --pr expects a positive PR number.');
     }
+    const prFeedbackAuthors = parseFeedbackAuthors(values['feedback-authors']);
     return {
       kind: 'watch-prs',
+      ...(prFeedbackAuthors !== undefined ? { feedbackAuthors: prFeedbackAuthors } : {}),
       repoSlug,
       repoPath,
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -1399,6 +1403,8 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --reviewing-label <l>  Label added while a PR is being reviewed (default: "vanguard:reviewing")
     --reviewed-label <l>   Label added after review succeeds (default: "vanguard:reviewed")
     --author <login>       Only review PRs opened by this GitHub login (self-review-only when set)
+    --feedback-authors <a,b> PR authors trusted beyond OWNER/MEMBER/COLLABORATOR; a PR by anyone else
+                           is skipped (pass the workflow's allowed-actors here)
     --pr <number>          Also review this PR even if the label scan misses it (label-triggered
                            CI runs pin the event's PR automatically via GITHUB_EVENT_PATH)
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
@@ -1414,7 +1420,8 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     Dedupe: successful Vanguard reviews include a hidden head SHA marker; watch-prs skips
       the same PR commit if the trigger label is re-added accidentally. The PR pinned by --pr or
       the triggering label event is always reviewed, and incomplete notices carry no marker, so a
-      failed review is retried on the next re-label or sweep.
+      failed review is retried on the next re-label or sweep. Only markers from trusted authors
+      (repo members, --feedback-authors, Vanguard's bot) count.
 
   doctor-prs options:
     Uses the same repo and label routing flags as watch-prs, but only runs AFK preflight checks and exits.

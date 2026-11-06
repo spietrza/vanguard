@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { classifyAuthor } from './comment-trust.js';
 import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
 
 export interface GitHubLabel {
@@ -68,6 +69,31 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
     ...(issue.state !== undefined ? { state: issue.state } : {}),
     ...(issue.author?.login !== undefined ? { author: issue.author.login } : {}),
   };
+}
+
+/**
+ * Whether the author of issue or PR `number` is trusted to start work: OWNER/MEMBER/COLLABORATOR, an
+ * allowlisted login (--feedback-authors) or a GitHub App bot. `gh issue/pr --json` exposes no author
+ * association, so this reads the REST issue (PRs are issues there). A failed lookup fails closed.
+ */
+export async function isTrustedIssueAuthor(
+  repo: string,
+  number: number | string,
+  allowedAuthors: readonly string[] | undefined,
+  gh: GhRunner = defaultGhRunner,
+): Promise<{ trusted: boolean; author: string; association: string }> {
+  try {
+    const issue = JSON.parse(await gh(['api', `repos/${repo}/issues/${issueNumber(String(number))}`])) as {
+      user?: { login?: string } | null;
+      author_association?: string;
+    };
+    const author = issue.user?.login ?? '';
+    const association = issue.author_association ?? '';
+    const trusted = author !== '' && classifyAuthor(author, association, { allowedAuthors }) !== 'untrusted';
+    return { trusted, author, association };
+  } catch {
+    return { trusted: false, author: '', association: '' };
+  }
 }
 
 /** Fetches GitHub issues (via the gh CLI) and maps them to Vanguard tasks. */

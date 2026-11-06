@@ -1,6 +1,7 @@
 import { trustedSpecText, isTrustedComment } from '../tasks/comment-trust.js';
 import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
+import { escapePromptTags } from '../context/escape.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel, providerKeyEnvNames } from '../agents/registry.js';
@@ -485,9 +486,9 @@ export async function runSourcedIssue(
       outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {
-          ...taskToVariables(task),
+          ...taskToVariables(task, { allowedAuthors: deps.feedbackAuthors }),
           ...(adapter.variables?.(issueRef, task) ?? {}),
-          RETROSPECTIVE_MEMORY: retrospectiveMemory,
+          RETROSPECTIVE_MEMORY: escapePromptTags(retrospectiveMemory),
         },
         ...(deps.forkN !== undefined
           ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent), ...(forkScore !== undefined ? { score: forkScore } : {}) } }

@@ -1,6 +1,6 @@
-import { isTrustedNonAuthorComment } from '../tasks/comment-trust.js';
+import { describeIgnoredAuthor, isTrustedNonAuthorComment } from '../tasks/comment-trust.js';
 import { LinearCliTaskFetcher, setLinearState, commentLinearIssue } from '../tasks/linear-cli.js';
-import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue, defaultGhRunner } from '../tasks/github.js';
+import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue, defaultGhRunner, isTrustedIssueAuthor } from '../tasks/github.js';
 import { GitLabTaskFetcher, editGitlabLabels, commentGitlabIssue, defaultGlabRunner } from '../tasks/gitlab.js';
 import { runLinearIssue } from './linear.js';
 import { runGithubIssue } from './github.js';
@@ -655,6 +655,26 @@ export interface WatchGithubOptions {
   gh?: GhRunner;
 }
 
+/**
+ * Drop ready GitHub issues whose author is not trusted (OWNER/MEMBER/COLLABORATOR, --feedback-authors or
+ * a GitHub App bot). A label alone is not consent: issue templates can apply the trigger label to an
+ * outsider's issue. Applied to both passes, so the spec pass never advances one into the agent pass.
+ */
+async function withTrustedIssueAuthors(
+  repo: string,
+  tasks: Task[],
+  allowedAuthors: readonly string[] | undefined,
+  gh: GhRunner | undefined,
+): Promise<Task[]> {
+  const verdicts = await Promise.all(tasks.map((task) => isTrustedIssueAuthor(repo, task.ref ?? task.id, allowedAuthors, gh)));
+  return tasks.filter((task, i) => {
+    const verdict = verdicts[i]!;
+    if (verdict.trusted) return true;
+    console.log(`vanguard: ${task.id} skipped -> issue author ${describeIgnoredAuthor(verdict.author || '?', verdict.association)} is not trusted (repo member or --feedback-authors)`);
+    return false;
+  });
+}
+
 /** GitHub-issue primitives: trigger by label, claim/review by swapping labels (issues have no states). */
 export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimitives {
   const repo = opts.deps.repoSlug;
@@ -667,7 +687,7 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
   const heldBefore = new Set<string>();
   return {
     listReady: async () => {
-      const tasks = await fetcher.list({ labels: agentLabels });
+      const tasks = await withTrustedIssueAuthors(repo, await fetcher.list({ labels: agentLabels }), opts.deps.feedbackAuthors, opts.gh);
       heldBefore.clear();
       for (const task of tasks) if (task.labels.includes(GITHUB_SECRET_BLOCKED_LABEL)) heldBefore.add(task.id);
       return tasks.map((task) => ({ id: task.id }));
@@ -752,7 +772,8 @@ export function githubSpecPrimitives(opts: WatchGithubSpecOptions): SpecWatchPri
   const generate = opts.generateSpec ?? runSpecGenerator;
   const specLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.specLabel] : [opts.specLabel];
   return {
-    listReady: async () => (await fetcher.list({ labels: specLabels })).map((task) => ({ id: task.id })),
+    listReady: async () =>
+      (await withTrustedIssueAuthors(repo, await fetcher.list({ labels: specLabels }), opts.deps.feedbackAuthors, opts.gh)).map((task) => ({ id: task.id })),
     claim: (id) => editGithubLabels(repo, id, { remove: [opts.specLabel], add: [opts.claimedLabel] }, opts.gh),
     runSpec: async (id) => {
       const task = await fetcher.fetch(id);
