@@ -33,6 +33,13 @@ describe('reduceTypedRun', () => {
     expect(s.warnings).toEqual(['first', 'second']);
   });
 
+  it('the same warning is kept once when backlog and live events overlap', () => {
+    let s = reduceTypedRun(initialTypedRun(), ev('r1', { type: 'run-accepted' }));
+    s = reduceTypedRun(s, ev('r1', { type: 'warning', message: 'first' }));
+    s = reduceTypedRun(s, ev('r1', { type: 'warning', message: 'first' }));
+    expect(s.warnings).toEqual(['first']);
+  });
+
   // S8 item 4 — the narrowed adoption rule: accept-time filtering alone was insufficient because
   // ANY first event used to adopt a runId into a virgin strip.
   it('a virgin strip refuses every event except run-accepted (foreign mid-flight events cannot seed it)', () => {
