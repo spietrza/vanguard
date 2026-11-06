@@ -215,8 +215,8 @@ export async function writeRepoFlow(repoPath: string, file: string, doc: FlowDoc
   // A repo-committed symlink under `.vanguard` must not redirect the write out of the checkout.
   const dir = await ensureStateDir(repoPath, flowsDir(repoPath));
   const tmp = join(dir, `.${file}.tmp`);
+  // writeFile follows a leaf symlink, rename replaces one without following it: guard the temp file only.
   await assertStatePath(repoPath, tmp);
-  await assertStatePath(repoPath, join(dir, file));
   try {
     await writeFile(tmp, source, 'utf8');
     await rename(tmp, join(dir, file));
@@ -324,7 +324,8 @@ export async function deleteRepoFlow(repoPath: string, file: string): Promise<vo
   if (!FLOW_FILE_RE.test(file)) {
     throw new FlowError(`invalid flow file name "${file}" — expected <name>.hcl`);
   }
-  await assertStatePath(repoPath, join(flowsDir(repoPath), file));
+  // unlink removes a symlinked leaf itself, so only the directories on the way need checking.
+  await assertStatePath(repoPath, flowsDir(repoPath));
   try {
     await unlink(join(flowsDir(repoPath), file));
   } catch (err) {

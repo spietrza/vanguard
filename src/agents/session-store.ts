@@ -1,4 +1,4 @@
-import { lstat } from 'node:fs/promises';
+import { lstat, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 
@@ -60,6 +60,13 @@ export async function captureSession(sandbox: IsolatedSandboxProvider, options: 
   const dest = hostSessionFile(options.hostDir, options.sessionId);
   await assertNotSymlink(dest);
   await sandbox.copyFileOut(sessionPath(options.home, options.cwd, options.sessionId), dest);
+  // The sandbox side is agent-owned: `docker cp` copies a symlink (or a directory) as-is, which would
+  // leave a link to an arbitrary host path in the checkout. Keep only a regular file.
+  const info = await lstat(dest).catch(() => undefined);
+  if (info === undefined || !info.isFile()) {
+    await rm(dest, { recursive: true, force: true });
+    throw new Error(`captured session ${dest} is not a regular file — discarded`);
+  }
   return dest;
 }
 

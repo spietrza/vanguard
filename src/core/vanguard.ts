@@ -5,7 +5,7 @@ import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
 import { hasTerminationSignal } from '../structured/extract.js';
-import { captureSession, isSafeSessionId, restoreSession, sessionPath } from '../agents/session-store.js';
+import { captureSession, hostSessionFile, isSafeSessionId, restoreSession, sessionPath } from '../agents/session-store.js';
 import { agentFamily, cacheEfficiency } from '../agents/provider.js';
 import { stageMetric } from './run-metric.js';
 import { assertStatePath, ensureStateDir } from './state-path.js';
@@ -408,7 +408,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       // read, breaking resume. Only restore for a true cross-run resume, when it is not present.
       const present = await ctx.sandbox.exists(sessionPath(ctx.home, WORKDIR, resumeSessionId));
       if (!present) {
-        const hostFile = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId, `${resumeSessionId}.jsonl`);
+        const hostFile = hostSessionFile(join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId), resumeSessionId);
         await assertStatePath(ctx.localRepoPath, hostFile);
         await restoreSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId: resumeSessionId, hostFile });
       }

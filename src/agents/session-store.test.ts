@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeCwd, sessionPath, captureSession, restoreSession, isSafeSessionId, hostSessionFile } from './session-store.js';
@@ -21,15 +21,21 @@ describe('sessionPath', () => {
 
 describe('captureSession / restoreSession', () => {
   it('copies the jsonl out to the host dir', async () => {
-    const calls: Array<[string, string]> = [];
-    const sandbox = {
-      copyFileOut: async (s: string, h: string): Promise<void> => {
-        calls.push([s, h]);
-      },
-    } as unknown as IsolatedSandboxProvider;
-    const dest = await captureSession(sandbox, { home: '/home/agent', cwd: '/workspace', sessionId: 'sid', hostDir: '/host/sessions' });
-    expect(dest).toBe('/host/sessions/sid.jsonl');
-    expect(calls).toEqual([['/home/agent/.claude/projects/-workspace/sid.jsonl', '/host/sessions/sid.jsonl']]);
+    const dir = await mkdtemp(join(tmpdir(), 'vg-sess-cap-'));
+    try {
+      const calls: Array<[string, string]> = [];
+      const sandbox = {
+        copyFileOut: async (s: string, h: string): Promise<void> => {
+          calls.push([s, h]);
+          await writeFile(h, '{}\n');
+        },
+      } as unknown as IsolatedSandboxProvider;
+      const dest = await captureSession(sandbox, { home: '/home/agent', cwd: '/workspace', sessionId: 'sid', hostDir: dir });
+      expect(dest).toBe(join(dir, 'sid.jsonl'));
+      expect(calls).toEqual([['/home/agent/.claude/projects/-workspace/sid.jsonl', join(dir, 'sid.jsonl')]]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('copies a captured jsonl back into the sandbox', async () => {
@@ -98,6 +104,40 @@ describe('session id validation', () => {
       ).rejects.toThrow(/regular file/);
       expect(calls).toEqual([]);
       expect(await readFile(victim, 'utf8')).toBe('operator data\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('captureSession output check', () => {
+  it('discards a captured symlink (docker cp copies an agent-planted link as-is)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vg-sess-out-'));
+    try {
+      const sandbox = {
+        copyFileOut: async (_s: string, h: string): Promise<void> => {
+          await symlink('/etc/hosts', h);
+        },
+      } as unknown as IsolatedSandboxProvider;
+      await expect(captureSession(sandbox, { home: '/root', cwd: '/workspace', sessionId: 'sid', hostDir: dir })).rejects.toThrow(
+        /not a regular file/,
+      );
+      await expect(lstat(join(dir, 'sid.jsonl'))).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a regular captured file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vg-sess-out-'));
+    try {
+      const sandbox = {
+        copyFileOut: async (_s: string, h: string): Promise<void> => {
+          await writeFile(h, '{}\n');
+        },
+      } as unknown as IsolatedSandboxProvider;
+      const dest = await captureSession(sandbox, { home: '/root', cwd: '/workspace', sessionId: 'sid', hostDir: dir });
+      expect(await readFile(dest, 'utf8')).toBe('{}\n');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

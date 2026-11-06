@@ -107,6 +107,12 @@ export class ProjectAllowlist {
     if (!isSessionPathGrammar(sessionFile)) {
       throw new BadRequestError('not a vanguard session file');
     }
+    // A session log is a regular file; a symlink at the leaf (e.g. one copied out of a sandbox) is refused
+    // rather than resolved and followed.
+    const info = await lstat(sessionFile).catch(() => undefined);
+    if (info !== undefined && !info.isFile()) {
+      throw new BadRequestError('not a vanguard session file');
+    }
     let real: string;
     try {
       real = await realpath(sessionFile);
