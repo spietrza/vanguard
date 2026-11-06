@@ -89,16 +89,31 @@ never a published port.
 
 The hub checks the `Host` header of every request — before serving the SPA, which carries a live
 token — and answers `403` for anything it doesn't recognise, so a page on an attacker-controlled
-domain cannot rebind that domain to the hub's address and drive it. Allowed by default, on the
-actually-bound port: `localhost`, and any **IP literal** (IPv4, or a bracketed IPv6 — `127.0.0.1`,
-`[::1]`, `0.0.0.0`, a LAN address, a Tailscale address). DNS rebinding can only produce a *hostname*,
-never an IP literal, so `--host 0.0.0.0` and the URL the CLI prints and opens work with no flag.
+domain cannot rebind that domain to the hub's address and drive it. Allowed by default, on any port:
+`localhost`, and any **IP literal** (IPv4, or a bracketed IPv6 — `127.0.0.1`, `[::1]`, `0.0.0.0`, a LAN
+address, a Tailscale address). DNS rebinding can only produce a *hostname*, never an IP literal, so
+`--host 0.0.0.0` and the URL the CLI prints and opens work with no flag; the port isn't checked against
+the socket the hub actually bound, so `docker run -p 8080:7777`, `ssh -L 8080:localhost:7777` and
+`kubectl port-forward` work too — none of that changes the hostname a DNS-rebinding page could have
+produced.
 
 Any other hostname — a reverse proxy's public name, a container's service name — must be opted in
 with `--allowed-host <host[:port]>` (repeatable) or `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated).
 Each value is matched against the `Host` header exactly, case-insensitively, so include the port
-whenever the browser's URL has a non-default one. It takes a bare `host[:port]`: a scheme, a path, a
-wildcard, an unbracketed IPv6 literal or a non-numeric port is a startup error, not a silent 403.
+whenever the browser's URL has a non-default one. It takes a bare `host[:port]`, with the port between
+1 and 65535: a scheme, a path, a wildcard, an unbracketed IPv6 literal or a non-numeric/out-of-range
+port is a startup error, not a silent 403. `--host <hostname>` (a non-loopback, non-IP-literal name) is
+seeded into the allowlist automatically, on the bound port, so the URL the CLI prints and opens is
+never refused.
+
+A **Tailscale MagicDNS name** (`host.tailnet.ts.net`) is a hostname, not an IP literal, so it needs
+`--allowed-host host.tailnet.ts.net` / `VANGUARD_HUB_ALLOWED_HOSTS=host.tailnet.ts.net` like any other
+hostname. A bare **Tailscale IP** (`100.x.y.z`) is an IP literal and needs no flag.
+
+> **Upgrading:** before this allowlist existed, any `Host` reached the hub. A deployment reached by
+> hostname — a Tailscale MagicDNS name, a reverse proxy's public name, a container's service name —
+> now needs `--allowed-host`/`VANGUARD_HUB_ALLOWED_HOSTS` added, or it 403s. One reached only by IP
+> literal or `localhost` needs no change.
 
 The same-origin check (`sameOriginOk` in `src/hub/server.ts`) compares the request's `Origin` header
 against its own `Host` header, not scheme, so the hub works behind an HTTPS-terminating reverse proxy
@@ -136,7 +151,7 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 | `VANGUARD_HUB_WATCH_INTERVAL_MS` | `2000` |
 | `VANGUARD_HUB_BROWSE_ROOT` | `$HOME` |
 | `VANGUARD_HUB_ALLOW_ADD` | — |
-| `VANGUARD_HUB_ALLOWED_HOSTS` | — (comma-separated exact Host values, added to `localhost`/any IP literal on the bound port) |
+| `VANGUARD_HUB_ALLOWED_HOSTS` | — (comma-separated exact Host values, added to `localhost`/any IP literal on any port) |
 | `VANGUARD_HUB_CLONE_HOSTS` | — (comma-separated hosts, added to `github.com`/`gitlab.com`) |
 
 ## Add project: existing folder or clone a URL
@@ -245,7 +260,7 @@ vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no
 | Flag | Overrides | Default |
 |---|---|---|
 | `--repo <path>` | — | cwd; seeded into the project store on startup if it's a git work tree and not already present |
-| `--allowed-host <host[:port]>` (repeatable) | `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated, additive) | `localhost` / any IP literal on the bound port |
+| `--allowed-host <host[:port]>` (repeatable) | `VANGUARD_HUB_ALLOWED_HOSTS` (comma-separated, additive) | `localhost` / any IP literal on any port |
 | `--host <addr>` | `VANGUARD_HUB_HOST` | `127.0.0.1` |
 | `--port <n>` | `VANGUARD_HUB_PORT` | `7777` (1-65535; an invalid explicit `--port` is a startup error) |
 | `--ui-dir <dir>` | `VANGUARD_HUB_UI_DIR` | `<pkg>/apps/desktop/dist` |

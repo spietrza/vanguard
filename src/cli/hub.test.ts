@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -120,6 +120,42 @@ describe('hubCommand', () => {
     }
   });
 
+  test('--host <hostname> seeds the allowlist, so the URL it prints and opens is not refused', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const host = hostname();
+    try {
+      await hubCommand(command({ host }));
+      const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
+      const url = line.slice('Vanguard Hub → '.length);
+      expect(url).toMatch(new RegExp(`^http://${host}:\\d+$`));
+      // The hub actually bound to this machine's own hostname (a real address on the sandbox's
+      // interface), so — unlike the `127.0.0.1`-bound tests — connect to the hostname itself, not
+      // to loopback, to reach the socket the printed URL names.
+      const { port } = new URL(url);
+      const get = (path: string): Promise<{ status: number; body: string }> =>
+        new Promise((resolve, reject) => {
+          const req = request({ host, port, path }, (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk: string) => { body += chunk; });
+            res.on('end', () => resolve({ status: res.statusCode!, body }));
+          });
+          req.on('error', reject);
+          req.end();
+        });
+      const page = await get('/');
+      expect(page.status).toBe(200);
+      expect(page.body).toContain('__VANGUARD_HUB_TOKEN__');
+      expect((await get('/healthz')).status).toBe(200);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.emit('SIGINT');
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  });
+
   test('an allowed Host carrying a scheme, a path or a wildcard is a startup error', async () => {
     for (const bad of ['https://hub.example', 'hub.example/ui', '*.example']) {
       await expect(hubCommand(command({ allowedHosts: [bad] }))).rejects.toThrow(/bare host\[:port\]/);
@@ -129,14 +165,46 @@ describe('hubCommand', () => {
     }
   });
 
-  test('an allowed Host no Host header could carry — a bare IPv6 literal, a non-numeric port — is a startup error', async () => {
-    for (const bad of ['::1', 'fe80::1', 'hub.example:http', 'hub.example:8080x', ':8080']) {
+  test('an allowed Host no Host header could carry — a bare IPv6 literal, empty brackets, a non-numeric port — is a startup error', async () => {
+    for (const bad of ['::1', 'fe80::1', 'hub.example:http', 'hub.example:8080x', ':8080', '[]', '[]:80']) {
       await expect(hubCommand(command({ allowedHosts: [bad] }))).rejects.toThrow(
         /bare host\[:port\], with any IPv6 literal bracketed .* and a numeric port/,
       );
       process.env.VANGUARD_HUB_ALLOWED_HOSTS = `ok.example,${bad}`;
       await expect(hubCommand(command())).rejects.toThrow(/any IPv6 literal bracketed/);
       delete process.env.VANGUARD_HUB_ALLOWED_HOSTS;
+    }
+  });
+
+  test('an allowed Host with a port outside 1-65535 is a startup error', async () => {
+    for (const bad of ['hub.example:0', 'hub.example:65536', 'hub.example:99999']) {
+      await expect(hubCommand(command({ allowedHosts: [bad] }))).rejects.toThrow(
+        /bare host\[:port\], with a port between 1 and 65535/,
+      );
+    }
+  });
+
+  test('--allowed-host values are trimmed the same way VANGUARD_HUB_ALLOWED_HOSTS values are', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await hubCommand(command({ allowedHosts: [' hub.example ', ''] }));
+      const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
+      const url = line.slice('Vanguard Hub → '.length);
+      // Untrimmed, "Host: hub.example" (what a browser actually sends) would never match the stored
+      // " hub.example " string.
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const req = request(url + '/healthz', { headers: { host: 'hub.example' } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      expect(status).toBe(200);
+    } finally {
+      logSpy.mockRestore();
+      process.emit('SIGINT');
+      await new Promise((r) => setTimeout(r, 0));
     }
   });
 

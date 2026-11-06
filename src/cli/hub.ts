@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { isIP } from 'node:net';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -11,23 +12,31 @@ import type { Command } from './args.js';
 
 const LOOPBACK_HOSTS = ['127.0.0.1', '::1', 'localhost'];
 
+function trimHosts(hosts: readonly string[]): string[] {
+  return hosts.map((h) => h.trim()).filter(Boolean);
+}
+
 function parseHostList(raw: string | undefined): string[] {
-  return (raw ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+  return trimHosts((raw ?? '').split(','));
 }
 
 /** `allowedHosts` is matched against the `Host` header exactly (case-insensitive `host[:port]`), so a
- * URL, a glob, or anything a `Host` header cannot hold — an unbracketed IPv6 literal, a non-numeric
- * port — would simply never match. Refuse all of those at startup instead of serving 403s the
- * operator cannot explain. */
+ * URL, a glob, or anything a `Host` header cannot hold — an unbracketed IPv6 literal, empty brackets,
+ * a non-numeric or out-of-range port — would simply never match. Refuse all of those at startup
+ * instead of serving 403s the operator cannot explain. */
 function assertPlainHosts(hosts: readonly string[]): void {
   for (const host of hosts) {
     // A scheme and a path are rejected by `splitHostPort` too, but they are the likely mistakes —
     // check them first so the message names them rather than talking about brackets and ports.
-    const requirement = /[/*]/.test(host)
-      ? 'with no scheme, path or wildcard'
-      : splitHostPort(host) === undefined
-        ? 'with any IPv6 literal bracketed ("[::1]:7777") and a numeric port'
-        : undefined;
+    const parsed = splitHostPort(host);
+    let requirement: string | undefined;
+    if (/[/*]/.test(host)) {
+      requirement = 'with no scheme, path or wildcard';
+    } else if (parsed === undefined || host.startsWith('[]')) {
+      requirement = 'with any IPv6 literal bracketed ("[::1]:7777") and a numeric port';
+    } else if (parsed.port < 1 || parsed.port > 65535) {
+      requirement = 'with a port between 1 and 65535';
+    }
     if (requirement !== undefined) {
       throw new Error(
         `Vanguard Hub: invalid allowed Host "${host}" — --allowed-host/VANGUARD_HUB_ALLOWED_HOSTS take a bare host[:port], ${requirement}.`,
@@ -64,7 +73,10 @@ const NO_AUTH_WARNING = [
 ].join('\n');
 
 export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Promise<void> {
-  const allowedHosts = [...(command.allowedHosts ?? []), ...parseHostList(process.env.VANGUARD_HUB_ALLOWED_HOSTS)];
+  const allowedHosts = [
+    ...trimHosts(command.allowedHosts ?? []),
+    ...parseHostList(process.env.VANGUARD_HUB_ALLOWED_HOSTS),
+  ];
   assertPlainHosts(allowedHosts);
 
   const uiDir = resolve(command.uiDir ?? process.env.VANGUARD_HUB_UI_DIR ?? join(pkgRoot(), 'apps/desktop/dist'));
@@ -130,6 +142,15 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
   // than echoing the requested value back.
   const address = hub.server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : command.port;
+
+  // `--host <hostname>` (a reverse proxy's name, a container's service name) is not loopback and not
+  // an IP literal, so `hostAllowed` (src/hub/server.ts) would otherwise 403 the very URL printed
+  // below. Seed the allowlist with it — same array reference `createHubServer` already holds, read
+  // per-request — before that URL can be requested.
+  if (!isLoopback && isIP(command.host) === 0) {
+    allowedHosts.push(`${command.host}:${boundPort}`);
+  }
+
   const hostForUrl = command.host.includes(':') ? `[${command.host}]` : command.host;
   const url = `http://${hostForUrl}:${boundPort}`;
   console.log(`Vanguard Hub → ${url}`);

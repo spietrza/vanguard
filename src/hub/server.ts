@@ -40,7 +40,7 @@ export interface HubServerOptions {
   deps?: SidecarDeps;
   spawnComplete?: SpawnComplete;
   /** Extra permitted `Host` header values (`host[:port]`, exact match, case-insensitive) beyond the
-   * default — `localhost` and any IP literal on the actual bound port (see `hostAllowed`). This is
+   * default — `localhost` and any IP literal, on any port (see `hostAllowed`). This is
    * `--allowed-host` / `VANGUARD_HUB_ALLOWED_HOSTS`, for the VPS / reverse-proxy deployment
    * (docs/hub.md). */
   allowedHosts?: readonly string[];
@@ -87,17 +87,21 @@ export function splitHostPort(host: string): { hostname: string; port: number } 
 /**
  * DNS rebinding works by pointing a *hostname* at this server's address, so a `Host` the browser
  * could only have produced from an IP literal it connected to directly — IPv4, or a bracketed IPv6 —
- * is safe on the actually-bound port: `--host 0.0.0.0`, a LAN address and a Tailscale address all
- * work with no `--allowed-host` (including the URL the CLI prints and opens). `localhost` resolves
- * to loopback everywhere, so it gets the same treatment. Any other hostname must be opted in
- * explicitly, matched against the `Host` header exactly (case-insensitive `host[:port]`).
+ * is safe regardless of port: `--host 0.0.0.0`, a LAN address and a Tailscale address all work with
+ * no `--allowed-host` (including the URL the CLI prints and opens). `localhost` resolves to loopback
+ * everywhere, so it gets the same treatment. The port is deliberately not checked against the socket
+ * the hub actually bound: `docker run -p 8080:7777`, `ssh -L 8080:localhost:7777` and `kubectl
+ * port-forward` all put a different port on the Host header than the one the hub listens on, and
+ * none of that changes the hostname a DNS-rebinding page could have produced — the hostname check
+ * alone carries the protection. Any other hostname must be opted in explicitly, matched against the
+ * `Host` header exactly (case-insensitive `host[:port]`).
  */
-function hostAllowed(host: string | undefined, boundPort: number, allowedHosts: readonly string[]): boolean {
+function hostAllowed(host: string | undefined, allowedHosts: readonly string[]): boolean {
   if (host === undefined) return false;
   const lower = host.toLowerCase();
   if (allowedHosts.some((allowed) => allowed.toLowerCase() === lower)) return true;
   const parsed = splitHostPort(lower);
-  if (parsed === undefined || parsed.port !== boundPort) return false;
+  if (parsed === undefined) return false;
   return parsed.hostname === 'localhost' || isIP(parsed.hostname) !== 0;
 }
 
@@ -219,7 +223,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  if (!hostAllowed(req.headers.host, req.socket.localPort ?? 0, opts.allowedHosts ?? [])) {
+  if (!hostAllowed(req.headers.host, opts.allowedHosts ?? [])) {
     jsonError(res, 403, HOST_NOT_ALLOWED, 'bad-request');
     return;
   }

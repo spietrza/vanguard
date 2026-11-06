@@ -49,21 +49,17 @@ no URL routing needed.
 This same frontend also runs with no Tauri runtime at all, served by `vanguard hub` over plain
 HTTP/SSE (see `../../docs/hub.md`). `src/transport.ts` is the seam: every `invoke`/`listen` call goes
 through `invoke()`/`subscribe()`, which pick Tauri's IPC or the hub's `POST /rpc/<cmd>` + `/events` SSE
-stream, depending on which of these is present, in order:
-
-1. `window.__VANGUARD_HUB__ === true` — the hub injects this marker into `index.html` itself.
-2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — selects the hub branch instead of the Tauri/mock one.
-3. Otherwise, Tauri — the branch `vitest` and `dev/mockBackend.ts` always exercise.
+stream depending on `window.__VANGUARD_HUB__ === true` — the marker the hub injects into `index.html`
+itself; its absence selects Tauri, the branch `vitest` and `dev/mockBackend.ts` always exercise.
 
 Alongside the marker, the hub injects a **per-launch token** into `index.html`
 (`window.__VANGUARD_HUB_TOKEN__`), which `transport.ts` sends on every `/rpc/<cmd>` and on `/events`.
 The hub requires it, so **the page must be served by the hub** — only then does it carry a token.
-That makes `VITE_VANGUARD_HUB=1` on Vite's own dev server (`http://localhost:1420`) a dead end: its
-page carries no token, and its same-origin `/rpc/<cmd>` goes to the dev server (which proxies nothing
-to the hub) rather than to a hub that would accept one. There is no escape hatch; to see a change
-against a real hub, rebuild and let the hub serve it (first recipe below). The token is minted
-per launch, so restarting the hub also invalidates an already-open page — the UI says so, and a
-reload picks up the new one.
+There is no dev-server path into hub mode: Vite's own dev server (`pnpm --dir apps/desktop dev`,
+`http://localhost:1420`) never injects the marker or a token, and has nothing to proxy `/rpc/<cmd>`
+or `/events` to even if it did. To see a change against a real hub, rebuild and let the hub serve it
+(recipe below). The token is minted per launch, so restarting the hub also invalidates an
+already-open page — the UI says so, and a reload picks up the new one.
 
 **Build the UI and run the hub against a real repo:**
 

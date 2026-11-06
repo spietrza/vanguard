@@ -1,8 +1,10 @@
 // Transport seam between the Inspector UI and its backend. Two backends answer the same calls:
 // Tauri's `invoke`/`listen` (the desktop app, and the branch vitest + dev/mockBackend.ts exercise)
 // and the hub's `POST /rpc/<cmd>` + `/events` SSE stream (a browser against `vanguard hub`, no Tauri
-// runtime present). Mode resolution order: the server-injected `window.__VANGUARD_HUB__` marker
-// (src/hub/static.ts), then `VITE_VANGUARD_HUB=1` (the hub branch without the marker), else Tauri.
+// runtime present). Mode resolution: the server-injected `window.__VANGUARD_HUB__` marker
+// (src/hub/static.ts) selects the hub branch; its absence selects Tauri. There is no dev-server path
+// into hub mode — the hub only ever serves its own built `dist/`, which is where the marker comes
+// from (see apps/desktop/README.md's "Hub mode" section).
 import {
   decodeResponse,
   decodeEvent,
@@ -22,8 +24,7 @@ declare global {
 }
 
 export function isHubMode(): boolean {
-  if (window.__VANGUARD_HUB__ === true) return true;
-  return import.meta.env.VITE_VANGUARD_HUB === '1';
+  return window.__VANGUARD_HUB__ === true;
 }
 
 // Fleet spawns shell commands — remote code execution on a reachable server — so hub mode disables
@@ -38,6 +39,10 @@ export function canUseFleet(): boolean {
  * reload picks up the new token — so both signals land here and the UI says so (App.tsx) rather than
  * going quietly stale. */
 const restartHandlers = new Set<() => void>();
+/** Anything else that kills `/events` for good — a 403 from the Host check, a reverse proxy's 502,
+ * a network drop the probe below can't attribute to the hub's own token — gets this neutral signal
+ * instead of the (wrong, misleading) "the hub restarted" wording. */
+const connectionIssueHandlers = new Set<() => void>();
 const EVENT_SOURCE_CLOSED = 2;
 
 /** The token `src/hub/static.ts` embedded in this page, or '' when there is none — the hub answers
@@ -46,17 +51,54 @@ function hubToken(): string {
   return window.__VANGUARD_HUB_TOKEN__ ?? '';
 }
 
+function notify(handlers: Set<() => void>): void {
+  for (const h of handlers) h();
+}
+
 function notifyHubRestarted(): void {
-  for (const h of restartHandlers) h();
+  notify(restartHandlers);
+}
+
+function notifyHubConnectionIssue(): void {
+  notify(connectionIssueHandlers);
+}
+
+function onHubSignal(handlers: Set<() => void>, handler: () => void): Promise<UnlistenFn> {
+  if (!isHubMode()) return Promise.resolve(() => {});
+  handlers.add(handler);
+  return Promise.resolve(() => {
+    handlers.delete(handler);
+  });
 }
 
 /** Register a callback for "this page's hub token is dead, reload". No-op under Tauri. */
 export function onHubRestart(handler: () => void): Promise<UnlistenFn> {
-  if (!isHubMode()) return Promise.resolve(() => {});
-  restartHandlers.add(handler);
-  return Promise.resolve(() => {
-    restartHandlers.delete(handler);
-  });
+  return onHubSignal(restartHandlers, handler);
+}
+
+/** Register a callback for "the hub connection is down, for some reason other than this page's own
+ * token being dead" — a 403 from the Host check, a reverse proxy's 502, a plain network drop. No-op
+ * under Tauri. */
+export function onHubConnectionIssue(handler: () => void): Promise<UnlistenFn> {
+  return onHubSignal(connectionIssueHandlers, handler);
+}
+
+/** `/events` closing tells a browser `EventSource` only that the connection is dead, never why —
+ * `readyState` has no status code or body. Re-probe the same URL with a plain `fetch`, which does:
+ * only the hub's own `HUB_TOKEN_REJECTED` envelope on a 401 means "reload fixes this"; any other
+ * status (a Host-check 403, a reverse proxy's 502) or a thrown network error means the connection
+ * just died, which is `onHubConnectionIssue`'s neutral signal instead. */
+async function probeHubRestart(): Promise<boolean> {
+  try {
+    const response = await fetch(`/events?${HUB_TOKEN_QUERY_PARAM}=${encodeURIComponent(hubToken())}`);
+    if (response.status !== 401) {
+      void response.body?.cancel();
+      return false;
+    }
+    return isHubTokenRejected(await response.json());
+  } catch {
+    return false;
+  }
 }
 
 async function hubInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -110,9 +152,14 @@ function ensureHubSource(): EventSource {
     for (const h of resyncHandlers) h();
   });
   // An `error` on a live stream is a transient drop the browser retries on its own; CLOSED means it
-  // gave up, which is what the restarted hub's 401 on `/events` looks like from here.
+  // gave up for good — which a restarted hub's 401 on `/events` looks like from here, but so does a
+  // 403 from the Host check or a reverse proxy's 502. Probe to tell those apart before notifying.
   source.addEventListener('error', () => {
-    if (source.readyState === EVENT_SOURCE_CLOSED) notifyHubRestarted();
+    if (source.readyState !== EVENT_SOURCE_CLOSED) return;
+    void probeHubRestart().then((restarted) => {
+      if (restarted) notifyHubRestarted();
+      else notifyHubConnectionIssue();
+    });
   });
   hubSource = source;
   return source;
