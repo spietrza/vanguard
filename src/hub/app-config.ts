@@ -1,6 +1,7 @@
 // Port of apps/desktop/src-tauri/src/appconfig.rs — see that file for the original Rust implementation.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { assertStatePath, ensureStateDir, stateDir } from '../core/state-path.js';
 
 /** The app's per-project config (`.vanguard/app.json`, spec §6). All optional; the CLI does not read
  * this — the app translates it into flags / a launch command. */
@@ -66,6 +67,8 @@ export async function readAppConfigStrict(repoPath: string): Promise<AppConfig> 
 /** Create `.vanguard/` if needed and write the config as pretty JSON (2-space indent) to
  * `.vanguard/app.json`. Overwrite fully (not a merge) — write exactly the object passed in. */
 export async function writeAppConfig(repoPath: string, cfg: AppConfig): Promise<void> {
-  await mkdir(join(repoPath, '.vanguard'), { recursive: true });
+  // A repo-committed `.vanguard` (or `app.json`) symlink must not redirect the write out of the checkout.
+  await ensureStateDir(repoPath, stateDir(repoPath));
+  await assertStatePath(repoPath, configPath(repoPath));
   await writeFile(configPath(repoPath), JSON.stringify(cfg, null, 2));
 }

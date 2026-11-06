@@ -1,5 +1,6 @@
-import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { writeFile, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { assertStatePath, ensureStateDir } from './state-path.js';
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -321,9 +322,11 @@ export function renderRetrospectiveMarkdown(report: RetrospectiveReport): string
 
 /** Write pre-rendered markdown to `.vanguard/memory/retrospective.md`. Returns the written path. */
 export async function writeRetrospectiveMarkdown(repoPath: string, markdown: string): Promise<string> {
-  const memDir = join(repoPath, '.vanguard', 'memory');
-  await mkdir(memDir, { recursive: true });
+  // Runs on every issue run's `finally`: a repo-committed symlink under `.vanguard` must not
+  // redirect this overwrite out of the checkout.
+  const memDir = await ensureStateDir(repoPath, join(repoPath, '.vanguard', 'memory'));
   const filePath = join(memDir, 'retrospective.md');
+  await assertStatePath(repoPath, filePath);
   await writeFile(filePath, markdown, 'utf8');
   return filePath;
 }

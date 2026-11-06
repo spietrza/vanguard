@@ -1,5 +1,6 @@
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { assertStatePath, ensureStateDir } from '../core/state-path.js';
 import { FLOWS } from '../api/capabilities.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import { emitFlowDoc } from './emit-doc.js';
@@ -211,9 +212,11 @@ export async function writeRepoFlow(repoPath: string, file: string, doc: FlowDoc
   } catch (err) {
     throw new FlowError(err instanceof Error ? err.message : String(err));
   }
-  const dir = flowsDir(repoPath);
-  await mkdir(dir, { recursive: true });
+  // A repo-committed symlink under `.vanguard` must not redirect the write out of the checkout.
+  const dir = await ensureStateDir(repoPath, flowsDir(repoPath));
   const tmp = join(dir, `.${file}.tmp`);
+  await assertStatePath(repoPath, tmp);
+  await assertStatePath(repoPath, join(dir, file));
   try {
     await writeFile(tmp, source, 'utf8');
     await rename(tmp, join(dir, file));
@@ -321,6 +324,7 @@ export async function deleteRepoFlow(repoPath: string, file: string): Promise<vo
   if (!FLOW_FILE_RE.test(file)) {
     throw new FlowError(`invalid flow file name "${file}" — expected <name>.hcl`);
   }
+  await assertStatePath(repoPath, join(flowsDir(repoPath), file));
   try {
     await unlink(join(flowsDir(repoPath), file));
   } catch (err) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, readFile, readdir, access, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir, access, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -414,5 +414,38 @@ describe('beginRun → listRuns/readRun round trip', () => {
     const summaries = await listRuns(runsRoot(repo));
     expect(summaries).toHaveLength(1);
     expect(summaries[0]!.stages).toEqual(['implementer']);
+  });
+});
+
+describe('committed symlinks under .vanguard', () => {
+  const proof = verResult;
+  let outside: string;
+  beforeEach(async () => {
+    outside = await mkdtemp(join(tmpdir(), 'vg-runstore-outside-'));
+  });
+  afterEach(async () => {
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it('refuses to write records through a symlinked .vanguard/runs and leaves the target untouched', async () => {
+    await mkdir(join(repo, '.vanguard'));
+    await symlink(outside, join(repo, '.vanguard', 'runs'));
+    await expect(beginRun(repo, 'gh-o-r-1', TS).writeProof(proof)).rejects.toThrow(/symlink/);
+    await expect(beginRun(repo, 'gh-o-r-1', TS).writeStages([{ name: 'implementer', result }])).rejects.toThrow(/symlink/);
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('refuses to append through a symlinked metrics.jsonl', async () => {
+    const victim = join(outside, 'victim.rc');
+    await writeFile(victim, 'export X=1\n');
+    await mkdir(join(repo, '.vanguard', 'runs'), { recursive: true });
+    await symlink(victim, join(repo, '.vanguard', 'runs', 'metrics.jsonl'));
+    await expect(beginRun(repo, 'gh-o-r-2', TS).writeProof(proof)).rejects.toThrow(/symlink/);
+    expect(await readFile(victim, 'utf8')).toBe('export X=1\n');
+  });
+
+  it('still writes on a real .vanguard/runs', async () => {
+    const file = await beginRun(repo, 'gh-o-r-3', TS).writeProof(proof);
+    expect(file.startsWith(join(repo, '.vanguard', 'runs', 'gh-o-r-3'))).toBe(true);
   });
 });

@@ -1,7 +1,8 @@
 import { execa } from 'execa';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { assertSafeBaseBranch } from '../core/base-branch.js';
+import { assertStatePath, stateDir } from '../core/state-path.js';
 import { WorktreeError } from '../core/errors.js';
 
 export interface Worktree {
@@ -66,11 +67,23 @@ export class WorktreeManager {
     const name = `${id}-${this.newRunId()}`;
     const branch = `${prefix}${name}`;
     const path = join(this.baseDir, name);
+    await this.assertInsideCheckout(path);
     try {
       await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
       throw new WorktreeError(`Failed to create worktree for ${taskId}`, { cause });
+    }
+  }
+
+  /** The default baseDir is under `.vanguard`: a repo-committed symlink there must not place the
+   * worktree (and every later copy-back write into it) outside the checkout. */
+  private async assertInsideCheckout(path: string): Promise<void> {
+    if (relative(stateDir(this.repoPath), path).startsWith('..')) return; // a caller-chosen baseDir elsewhere
+    try {
+      await assertStatePath(this.repoPath, path);
+    } catch (cause) {
+      throw new WorktreeError(`Refusing to create worktree at ${path}`, { cause });
     }
   }
 
@@ -101,6 +114,7 @@ export class WorktreeManager {
     if (live) return { path, branch };
 
     // Branch exists but its worktree was removed — recreate the worktree on the existing branch.
+    await this.assertInsideCheckout(path);
     try {
       await execa('git', ['worktree', 'add', path, branch], { cwd: this.repoPath });
       return { path, branch };
