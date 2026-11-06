@@ -1,11 +1,15 @@
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
+import { PassThrough } from 'node:stream';
+import type { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { createHubServer, MAX_RPC_BODY_BYTES, type HubServer } from './server.js';
 import { listRunSummaries, defaultRunsRoot } from './runs.js';
+import { MAX_CONCURRENT_COMPLETES } from './complete.js';
 import type { SidecarDeps } from '../sidecar/sidecar.js';
 
 function unimplementedDeps(): SidecarDeps {
@@ -54,7 +58,6 @@ beforeEach(async () => {
     browseRoot,
     bind: { isLoopback: true, allowAdd: false },
     seedRepoPath: repo,
-    version: '0.0.0-test',
     deps: unimplementedDeps(),
     allowedHosts: ['Hub.Example'],
   });
@@ -182,10 +185,45 @@ describe('hub server', () => {
     }
   });
 
-  test('T-80 GET /healthz', async () => {
+  test('T-80 GET /healthz answers without the token, with a constant body', async () => {
     const res = await fetch(`${baseUrl}/healthz`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, version: '0.0.0-test' });
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  test('api_complete past the concurrency cap answers 429', async () => {
+    let spawned = 0;
+    const busy = createHubServer({
+      uiDir,
+      configDir,
+      browseRoot,
+      bind: { isLoopback: true, allowAdd: false },
+      seedRepoPath: repo,
+      deps: unimplementedDeps(),
+      spawnComplete: () => {
+        spawned += 1;
+        return Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => true }) as unknown as ChildProcess;
+      },
+    });
+    await busy.listen(0, '127.0.0.1');
+    const busyUrl = `http://127.0.0.1:${(busy.server.address() as AddressInfo).port}`;
+    const call = (): Promise<Response> =>
+      fetch(`${busyUrl}/rpc/api_complete`, {
+        method: 'POST',
+        headers: { 'x-vanguard-hub-token': busy.token, 'content-type': 'application/json', origin: busyUrl },
+        body: JSON.stringify({ repoPath: repo, req: { model: 'm', messages: [] } }),
+      });
+    try {
+      const pending = Array.from({ length: MAX_CONCURRENT_COMPLETES }, () => call().catch(() => undefined));
+      while (spawned < MAX_CONCURRENT_COMPLETES) await new Promise((r) => setTimeout(r, 5));
+      const rejected = await call();
+      expect(rejected.status).toBe(429);
+      expect(await rejected.json()).toMatchObject({ error: { message: expect.stringContaining('too many doc chat requests') } });
+      expect(spawned).toBe(MAX_CONCURRENT_COMPLETES);
+      void Promise.all(pending);
+    } finally {
+      await busy.close();
+    }
   });
 
   test('T-81 POST /rpc/list_runs matches calling the reader directly', async () => {

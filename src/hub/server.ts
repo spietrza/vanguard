@@ -13,7 +13,7 @@ import { encodeError, encodeResult, HUB_TOKEN_HEADER, HUB_TOKEN_QUERY_PARAM, HUB
 import { ProjectAllowlist, type BindOptions } from './allowlist.js';
 import { WatchRegistry, type WatchOptions } from './watch.js';
 import { createRunSession } from './run-session.js';
-import { CompleteRegistry, type SpawnComplete } from './complete.js';
+import { CompleteBusyError, CompleteRegistry, type SpawnComplete } from './complete.js';
 import { loadPaths } from './projects.js';
 import { productionDeps } from '../sidecar/deps.js';
 import type { SidecarDeps } from '../sidecar/sidecar.js';
@@ -34,8 +34,6 @@ export interface HubServerOptions {
   bind: BindOptions;
   /** The `--repo` seed, always allowed even before it reaches the persisted project store. */
   seedRepoPath?: string;
-  /** Returned verbatim by `GET /healthz` (the package version). */
-  version: string;
   watch?: WatchOptions;
   deps?: SidecarDeps;
   spawnComplete?: SpawnComplete;
@@ -210,7 +208,13 @@ async function handleRpcRequest(ctx: RpcContext, req: IncomingMessage, res: Serv
     writeJson(res, 200, encodeResult(result));
   } catch (err) {
     const classified = classifyError(err);
-    const status = classified.notFound ? 404 : classified.kind === 'bad-request' ? 400 : 500;
+    const status = classified.notFound
+      ? 404
+      : err instanceof CompleteBusyError
+        ? 429
+        : classified.kind === 'bad-request'
+          ? 400
+          : 500;
     jsonError(res, status, classified.message, classified.kind);
   }
 }
@@ -232,7 +236,9 @@ async function handleRequest(
 
   if (pathname === '/healthz') {
     if (req.method !== 'GET' && req.method !== 'HEAD') return methodNotAllowed(res, 'GET, HEAD');
-    writeJson(res, 200, { ok: true, version: opts.version });
+    // Unauthenticated on purpose — the container HEALTHCHECK (docker/hub.Dockerfile) has no token —
+    // so the body is a constant: it says the port answers, nothing about which build is behind it.
+    writeJson(res, 200, { ok: true });
     return;
   }
 
