@@ -140,7 +140,7 @@ export default function App() {
   }, []);
 
   // A restarted hub invalidates this page's per-launch token: every RPC 401s and the SSE stream
-  // stays closed, so say "reload" instead of letting the UI go silently stale.
+  // stays closed, so point at the launch URL instead of letting the UI go silently stale.
   useEffect(() => {
     const un = onHubRestart(() => setHubRestarted(true));
     return () => void un.then((f) => f());
@@ -257,7 +257,8 @@ export default function App() {
           role="alert"
           className="shrink-0 border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive"
         >
-          The hub restarted — reload the page to reconnect.
+          This tab has no valid hub token (the hub restarted, or the page was opened without its launch
+          URL) — open the URL `vanguard hub` printed to reconnect.
         </div>
       )}
       {!hubRestarted && hubConnectionIssue && (

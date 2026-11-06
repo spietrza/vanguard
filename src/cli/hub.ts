@@ -7,6 +7,7 @@ import { execa } from 'execa';
 import { createHubServer, splitHostPort } from '../hub/server.js';
 import { injectHubMarker } from '../hub/static.js';
 import { assertGitWorkTreeDir } from '../hub/allowlist.js';
+import { HUB_TOKEN_FRAGMENT_PARAM } from '../hub-wire.js';
 import { loadPaths, add as addProject } from '../hub/projects.js';
 import type { Command } from './args.js';
 
@@ -63,6 +64,14 @@ async function assertUiDirBuilt(uiDir: string): Promise<void> {
       `Vanguard Hub: cannot read ${indexPath} (${reason}) — build the desktop app first: pnpm --dir apps/desktop build`,
     );
   }
+}
+
+/** The URL the CLI prints and opens: `origin/#token=<token>`. The token rides in the fragment, which
+ * browsers never send to the server, so the hub never has to serve it to whoever fetches `GET /`;
+ * the SPA reads it once into sessionStorage (apps/desktop/src/transport.ts). Behind a reverse proxy,
+ * append the same `#token=…` to the public URL. */
+export function hubLaunchUrl(origin: string, token: string): string {
+  return `${origin}/#${HUB_TOKEN_FRAGMENT_PARAM}=${encodeURIComponent(token)}`;
 }
 
 const NO_AUTH_WARNING = [
@@ -152,7 +161,7 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
   }
 
   const hostForUrl = command.host.includes(':') ? `[${command.host}]` : command.host;
-  const url = `http://${hostForUrl}:${boundPort}`;
+  const url = hubLaunchUrl(`http://${hostForUrl}:${boundPort}`, hub.token);
   console.log(`Vanguard Hub → ${url}`);
 
   const projects = await loadPaths(configDir);

@@ -21,6 +21,11 @@ export const HUB_MARKER = '<script>window.__VANGUARD_HUB__=true</script>';
 export const HUB_TOKEN_HEADER = 'x-vanguard-hub-token';
 export const HUB_TOKEN_QUERY_PARAM = 'token';
 
+/** The launch URL (`src/cli/hub.ts`) carries the token in its fragment as `#<this>=<token>` — a
+ * fragment never reaches the server, so the page `GET /` serves holds no token. The SPA reads it
+ * once, keeps it in sessionStorage and strips it from the address bar. */
+export const HUB_TOKEN_FRAGMENT_PARAM = 'token';
+
 /** The hub's own "your token is dead" message, in the `{error:{message}}` envelope of its 401 —
  * `src/hub/server.ts` sends it, `isHubTokenRejected` below recognises it. */
 export const HUB_TOKEN_REJECTED = 'invalid hub token';

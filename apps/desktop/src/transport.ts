@@ -11,6 +11,7 @@ import {
   STREAM_RESET_EVENT,
   HUB_TOKEN_HEADER,
   HUB_TOKEN_QUERY_PARAM,
+  HUB_TOKEN_FRAGMENT_PARAM,
   isHubTokenRejected,
 } from './hub-wire';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
@@ -19,7 +20,6 @@ import { listen as tauriListen, type UnlistenFn } from '@tauri-apps/api/event';
 declare global {
   interface Window {
     __VANGUARD_HUB__?: boolean;
-    __VANGUARD_HUB_TOKEN__?: string;
   }
 }
 
@@ -33,11 +33,11 @@ export function canUseFleet(): boolean {
   return !isHubMode();
 }
 
-/** A hub restart mints a fresh per-launch token (src/hub/server.ts), so the one this page was served
- * with stops working: `/rpc/*` answers 401 and `/events` answers 401, which makes the browser close
- * the `EventSource` for good instead of reconnecting. Nothing the page can do fixes that — only a
- * reload picks up the new token — so both signals land here and the UI says so (App.tsx) rather than
- * going quietly stale. */
+/** A hub restart mints a fresh per-launch token (src/hub/server.ts), so the one this tab holds
+ * stops working: `/rpc/*` answers 401 and `/events` answers 401, which makes the browser close the
+ * `EventSource` for good instead of reconnecting. Nothing the page can do fixes that — only opening
+ * the new launch URL the hub printed hands it the new token — so both signals land here and the UI
+ * says so (App.tsx) rather than going quietly stale. */
 const restartHandlers = new Set<() => void>();
 /** Anything else that kills `/events` for good — a 403 from the Host check, a reverse proxy's 502,
  * a network drop the probe below can't attribute to the hub's own token — gets this neutral signal
@@ -45,10 +45,42 @@ const restartHandlers = new Set<() => void>();
 const connectionIssueHandlers = new Set<() => void>();
 const EVENT_SOURCE_CLOSED = 2;
 
-/** The token `src/hub/static.ts` embedded in this page, or '' when there is none — the hub answers
- * 401 either way, which is the signal below. */
+const HUB_TOKEN_STORAGE_KEY = 'vanguard-hub-token';
+
+function fragmentToken(): string | null {
+  return new URLSearchParams(window.location.hash.slice(1)).get(HUB_TOKEN_FRAGMENT_PARAM);
+}
+
+/** Move the launch URL's `#token=…` (src/cli/hub.ts) into sessionStorage and strip it from the
+ * address bar, so it is neither bookmarked nor left in history. The server never sees a fragment and
+ * never serves the token, so this is the only way a browser page gets one. No-op without the
+ * fragment. A fresh launch URL overwrites a stored token from an earlier hub launch. */
+export function captureHubToken(): void {
+  const token = fragmentToken();
+  if (token === null) return;
+  try {
+    window.sessionStorage.setItem(HUB_TOKEN_STORAGE_KEY, token);
+  } catch {
+    return; // Storage blocked: keep the fragment, `hubToken()` reads it from there instead.
+  }
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  params.delete(HUB_TOKEN_FRAGMENT_PARAM);
+  const rest = params.toString();
+  const { pathname, search } = window.location;
+  window.history.replaceState(window.history.state, '', `${pathname}${search}${rest === '' ? '' : `#${rest}`}`);
+}
+
+/** This tab's token, or '' when it has none — the hub answers 401 either way, which is the signal
+ * below. */
 function hubToken(): string {
-  return window.__VANGUARD_HUB_TOKEN__ ?? '';
+  captureHubToken();
+  const fromFragment = fragmentToken();
+  if (fromFragment !== null) return fromFragment;
+  try {
+    return window.sessionStorage.getItem(HUB_TOKEN_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
 }
 
 function notify(handlers: Set<() => void>): void {

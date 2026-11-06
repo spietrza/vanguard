@@ -80,7 +80,7 @@ describe('hubCommand', () => {
     try {
       await hubCommand(command({ allowedHosts: ['cli.example'] }));
       const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
-      const url = line.slice('Vanguard Hub → '.length);
+      const url = new URL(line.slice('Vanguard Hub → '.length)).origin;
       for (const host of ['cli.example', 'env.example']) {
         // node:http preserves an explicit Host (fetch implementations may replace it).
         const status = await new Promise<number | undefined>((resolve, reject) => {
@@ -107,10 +107,11 @@ describe('hubCommand', () => {
       await hubCommand(command({ host: '0.0.0.0' }));
       const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
       const url = line.slice('Vanguard Hub → '.length);
-      expect(url).toMatch(/^http:\/\/0\.0\.0\.0:\d+$/);
+      expect(url).toMatch(/^http:\/\/0\.0\.0\.0:\d+\/#token=[a-f0-9]{64}$/);
       const page = await httpGet(url, '/');
       expect(page.status).toBe(200);
-      expect(page.body).toContain('__VANGUARD_HUB_TOKEN__');
+      expect(page.body).toContain('__VANGUARD_HUB__');
+      expect(page.body).not.toContain(new URL(url).hash.slice('#token='.length));
       expect((await httpGet(url, '/healthz')).status).toBe(200);
     } finally {
       logSpy.mockRestore();
@@ -128,7 +129,7 @@ describe('hubCommand', () => {
       await hubCommand(command({ host }));
       const line = logSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('Vanguard Hub → '))!;
       const url = line.slice('Vanguard Hub → '.length);
-      expect(url).toMatch(new RegExp(`^http://${host}:\\d+$`));
+      expect(url).toMatch(new RegExp(`^http://${host}:\\d+/#token=[0-9a-f]+$`));
       // The hub actually bound to this machine's own hostname (a real address on the sandbox's
       // interface), so — unlike the `127.0.0.1`-bound tests — connect to the hostname itself, not
       // to loopback, to reach the socket the printed URL names.
@@ -146,7 +147,7 @@ describe('hubCommand', () => {
         });
       const page = await get('/');
       expect(page.status).toBe(200);
-      expect(page.body).toContain('__VANGUARD_HUB_TOKEN__');
+      expect(page.body).not.toContain('__VANGUARD_HUB_TOKEN__'); // the token only travels in the launch URL fragment
       expect((await get('/healthz')).status).toBe(200);
     } finally {
       logSpy.mockRestore();
@@ -284,6 +285,21 @@ describe('hubCommand', () => {
       await hubCommand(command({ open: true }));
       expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('WARNING'))).toBe(false);
       expect(execa).toHaveBeenCalled();
+      // The browser opens the launch URL: the token rides in the fragment, which is never sent to
+      // the server, and it is the token that authorizes `/rpc/*`.
+      const openArgs = vi.mocked(execa).mock.calls[0]![1] as readonly string[];
+      const opened = new URL(openArgs[0]!);
+      expect(opened.pathname).toBe('/');
+      expect(opened.search).toBe('');
+      const token = new URLSearchParams(opened.hash.slice(1)).get('token')!;
+      expect(token).toMatch(/^[a-f0-9]{64}$/);
+      const rpc = (t: string): Promise<Response> =>
+        fetch(`${opened.origin}/rpc/list_projects`, {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-vanguard-hub-token': t }, body: '{}',
+        });
+      expect((await rpc(token)).status).toBe(200);
+      expect((await rpc('')).status).toBe(401);
+      expect(await (await fetch(opened.origin + '/')).text()).not.toContain(token);
     } finally {
       logSpy.mockRestore();
       errorSpy.mockRestore();
@@ -299,7 +315,7 @@ describe('hubCommand', () => {
       await hubCommand(command());
       const line = logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('Vanguard Hub → '));
       expect(line).toBeDefined();
-      const url = line!.replace('Vanguard Hub → ', '');
+      const url = new URL(line!.replace('Vanguard Hub → ', '')).origin;
       const res = await fetch(`${url}/healthz`);
       expect(await res.json()).toEqual({ ok: true, version: pkg.version });
 
