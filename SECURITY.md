@@ -15,7 +15,7 @@ Only the latest minor release gets security fixes. The `v1` tag used by the reus
 
 **Do not open a public issue, pull request or discussion for a security problem.**
 
-Report it privately through GitHub: **Security → Report a vulnerability** on [spietrza/vanguard](https://github.com/spietrza/vanguard/security/advisories/new).
+Report it privately through GitHub: **Security → Report a vulnerability** on [spietrza/taskcell](https://github.com/spietrza/taskcell/security/advisories/new).
 
 Include:
 

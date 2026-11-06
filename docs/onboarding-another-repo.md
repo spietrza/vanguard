@@ -1,6 +1,6 @@
 # Run Vanguard on your own repo (GitHub Actions)
 
-Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed and does not carry the workflow steps: each workflow in your repo is a **thin caller** (triggers, permissions, an actor gate, a `uses:` line) of a **reusable workflow** that lives in `spietrza/vanguard`. The reusable workflow checks Vanguard out beside your code, builds it, and runs it in a Docker sandbox on the GitHub runner.
+Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed and does not carry the workflow steps: each workflow in your repo is a **thin caller** (triggers, permissions, an actor gate, a `uses:` line) of a **reusable workflow** that lives in `spietrza/taskcell`. The reusable workflow checks Vanguard out beside your code, builds it, and runs it in a Docker sandbox on the GitHub runner.
 
 You drop in **one or two thin callers** (implement, plus the optional doctor), set **one secret** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
 
@@ -12,7 +12,7 @@ You drop in **one or two thin callers** (implement, plus the optional doctor), s
 
 ### How it fits together
 
-| You own (in your repo) | Vanguard owns (`spietrza/vanguard/.github/workflows/`) |
+| You own (in your repo) | Vanguard owns (`spietrza/taskcell/.github/workflows/`) |
 |---|---|
 | `on:` triggers, `permissions`, `concurrency` | the steps: checkout, build, label bootstrap, the CLI call |
 | the `if:` actor gate, the `allowed-actors` list | timeouts, runner, flag assembly |
@@ -22,7 +22,7 @@ When Vanguard changes a default or a step, you get it on your next run (or when 
 
 Things to know before copying:
 
-- **Pin the ref.** `uses: spietrza/vanguard/.github/workflows/implement.yml@v1` follows the moving `v1` tag (moved by hand once Vanguard's own factory is green on `main`). `@main` follows the tip immediately — a bad change then hits every repo at once, so prefer `@v1`.
+- **Pin the ref.** `uses: spietrza/taskcell/.github/workflows/implement.yml@v1` follows the moving `v1` tag (moved by hand once Vanguard's own factory is green on `main`). `@main` follows the tip immediately — a bad change then hits every repo at once, so prefer `@v1`.
 - **`vanguard-ref` follows the workflow ref.** Leave the `vanguard-ref` input empty and the CLI is built at the same revision as the YAML, so a caller pinned `@v1` builds Vanguard at `v1` too. Set it only to build a different revision (for example to test a branch). On GitHub Enterprise Server `job.workflow_sha` / `job.workflow_repository` are not available, so set `vanguard-ref` explicitly there or the run fails at the "Resolve vanguard source ref" guard.
 - **No `secrets: inherit`.** Each secret is mapped explicitly in the caller, so you can see exactly which credentials reach the run. Every secret is optional on the reusable side; map only what your setup needs.
 - **`allowed-actors` is mandatory.** It is a JSON array of GitHub logins, passed as a string. The reusable workflow checks `github.event.sender.login` against it as a backstop to your own `if:`; a caller that omits it fails at startup, and a sender not in the list fails the run loudly (red, with an error) rather than skipping it, so a typo in the list cannot hide as a green no-op. Keep your caller's `if:` as well — it also gates on the issue or PR author, which the backstop does not.
@@ -66,7 +66,7 @@ jobs:
       contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       github.event.issue.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
-    uses: spietrza/vanguard/.github/workflows/implement.yml@v1
+    uses: spietrza/taskcell/.github/workflows/implement.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       llm-proxy: true
@@ -130,7 +130,7 @@ concurrency:
 jobs:
   doctor:
     if: github.actor == 'YOUR_LOGIN'
-    uses: spietrza/vanguard/.github/workflows/doctor.yml@v1
+    uses: spietrza/taskcell/.github/workflows/doctor.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
     secrets:
@@ -167,7 +167,7 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.pull_request.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
-    uses: spietrza/vanguard/.github/workflows/pr-review.yml@v1
+    uses: spietrza/taskcell/.github/workflows/pr-review.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       author: YOUR_LOGIN
@@ -184,7 +184,7 @@ Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provi
 
 ### `vanguard-research.yml` and `vanguard-revise.yml` (optional)
 
-Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, plus `uses: spietrza/vanguard/.github/workflows/research.yml@v1` or `.../revise.yml@v1`.
+Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, plus `uses: spietrza/taskcell/.github/workflows/research.yml@v1` or `.../revise.yml@v1`.
 
 | Workflow | Inputs | Secrets |
 |---|---|---|
@@ -217,7 +217,7 @@ jobs:
       (github.event.label.name == 'needs revision' &&
        contains(fromJSON('["YOUR_LOGIN","github-actions[bot]"]'), github.event.pull_request.user.login) &&
        github.event.sender.login == 'YOUR_LOGIN')
-    uses: spietrza/vanguard/.github/workflows/revise.yml@v1
+    uses: spietrza/taskcell/.github/workflows/revise.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       number: ${{ github.event.pull_request.number || inputs.pr }}
@@ -332,7 +332,7 @@ To run **Opus** spec / **Sonnet** impl / **Codex** review with Codex on a ChatGP
    ```
 2. In the implement caller, set the model inputs, map the secret, and **drop `llm-proxy`** (a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover):
    ```yaml
-       uses: spietrza/vanguard/.github/workflows/implement.yml@v1
+       uses: spietrza/taskcell/.github/workflows/implement.yml@v1
        with:
          allowed-actors: '["YOUR_LOGIN"]'
          provider: claude
