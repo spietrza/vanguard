@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { WorktreeError } from '../core/errors.js';
+import { hostGitArgs } from './host-git.js';
 
 export interface Worktree {
   path: string;
@@ -67,7 +68,7 @@ export class WorktreeManager {
     const branch = `${prefix}${name}`;
     const path = join(this.baseDir, name);
     try {
-      await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
+      await execa('git', hostGitArgs(['worktree', 'add', '-b', branch, path, baseBranch]), { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
       throw new WorktreeError(`Failed to create worktree for ${taskId}`, { cause });
@@ -102,7 +103,7 @@ export class WorktreeManager {
 
     // Branch exists but its worktree was removed — recreate the worktree on the existing branch.
     try {
-      await execa('git', ['worktree', 'add', path, branch], { cwd: this.repoPath });
+      await execa('git', hostGitArgs(['worktree', 'add', path, branch]), { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
       throw new WorktreeError(`Failed to reuse worktree for ${id}`, { cause });
@@ -111,7 +112,7 @@ export class WorktreeManager {
 
   async isDirty(worktreePath: string): Promise<boolean> {
     try {
-      const { stdout } = await execa('git', ['status', '--porcelain'], { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['status', '--porcelain']), { cwd: worktreePath });
       return stdout.trim() !== '';
     } catch (cause) {
       throw new WorktreeError(`Failed to check worktree status ${worktreePath}`, { cause });
@@ -121,8 +122,8 @@ export class WorktreeManager {
   async diff(worktreePath: string): Promise<string> {
     try {
       // -N (intent-to-add) so brand-new untracked files appear in `git diff HEAD`.
-      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
-      const { stdout } = await execa('git', ['diff', 'HEAD'], { cwd: worktreePath });
+      await execa('git', hostGitArgs(['add', '-A', '-N']), { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['diff', 'HEAD']), { cwd: worktreePath });
       return stdout;
     } catch (cause) {
       throw new WorktreeError(`Failed to get worktree diff ${worktreePath}`, { cause });
@@ -135,8 +136,8 @@ export class WorktreeManager {
    */
   async changedPaths(worktreePath: string): Promise<string[]> {
     try {
-      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
-      const { stdout } = await execa('git', ['diff', 'HEAD', '--name-only', '--no-renames', '-z'], { cwd: worktreePath });
+      await execa('git', hostGitArgs(['add', '-A', '-N']), { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['diff', 'HEAD', '--name-only', '--no-renames', '-z']), { cwd: worktreePath });
       return stdout.split('\0').filter((path) => path !== '');
     } catch (cause) {
       throw new WorktreeError(`Failed to list worktree changes ${worktreePath}`, { cause });
@@ -150,7 +151,7 @@ export class WorktreeManager {
    */
   async commitMessages(worktreePath: string, baseRef: string): Promise<string[]> {
     try {
-      const { stdout } = await execa('git', ['log', `${baseRef}..HEAD`, '--format=%B%x00'], { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['log', `${baseRef}..HEAD`, '--format=%B%x00']), { cwd: worktreePath });
       return stdout
         .split('\0')
         .map((m) => m.trim())

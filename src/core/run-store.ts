@@ -5,6 +5,7 @@
 import { mkdir, writeFile, appendFile, unlink, readdir, readFile, lstat, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
+import { hostGitArgs } from '../worktree/host-git.js';
 import { BadRequestError } from '../sidecar/sidecar.js';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
@@ -387,7 +388,7 @@ async function writeRecord(root: string, taskId: string, timestamp: string, resu
     if (diff) await writeFile(`${base}.diff`, diff);
     const bundlePath = `${base}.bundle`;
     try {
-      await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
+      await execa('git', hostGitArgs(['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']));
     } catch {
       // best-effort: remove any partial file git may have opened before it failed
       await unlink(bundlePath).catch(() => undefined);
