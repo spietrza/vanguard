@@ -145,11 +145,13 @@ export async function pruneWorktrees(repoPath: string): Promise<void> {
 export interface RemoteBranchInfo {
   name: string;
   ageMs: number;
+  /** The branch's current tip commit; a PR proves the branch finished only when its head is this commit. */
+  sha?: string;
 }
 
 export type RemoteBranchLister = () => Promise<RemoteBranchInfo[]>;
-export type MergedChecker = (branch: string) => Promise<boolean>;
-export type AbandonedChecker = (branch: string) => Promise<boolean>;
+export type MergedChecker = (branch: string, tipSha?: string) => Promise<boolean>;
+export type AbandonedChecker = (branch: string, tipSha?: string) => Promise<boolean>;
 export type RemoteBranchRemover = (branch: string) => Promise<void>;
 
 export type ReapBranchOpts =
@@ -186,8 +188,8 @@ export async function reapRemoteBranches(
   const aged = (await lister()).filter((branch) => branch.ageMs > maxAgeMs);
   const names = (
     await mapLimit(aged, PR_CHECK_CONCURRENCY, async (branch) => {
-      if (await isMerged(branch.name)) return branch.name;
-      if (opts?.abandoned && (await opts.isAbandoned(branch.name))) return branch.name;
+      if (await isMerged(branch.name, branch.sha)) return branch.name;
+      if (opts?.abandoned && (await opts.isAbandoned(branch.name, branch.sha))) return branch.name;
       return null;
     })
   ).filter((name): name is string => name !== null);
@@ -208,32 +210,49 @@ export function gitRemoteBranchLister(
     // so a plain prefix would not match on a slash boundary the way the old `vanguard/` prefix did.
     const { stdout } = await execa(
       'git',
-      ['for-each-ref', '--format', '%(refname:short)\t%(committerdate:unix)', `refs/remotes/${remote}/${prefix}*`],
+      ['for-each-ref', '--format', '%(refname:short)\t%(committerdate:unix)\t%(objectname)', `refs/remotes/${remote}/${prefix}*`],
       { cwd: repoPath },
     );
     return stdout
       .split('\n')
       .map((line): RemoteBranchInfo => {
-        const [short = '', unix] = line.split('\t');
+        const [short = '', unix, sha] = line.split('\t');
         // refname:short is `<remote>/vanguard/<x>`; strip the remote so the name works with gh/push.
         const name = short.startsWith(`${remote}/`) ? short.slice(remote.length + 1) : short;
         const created = Number(unix) * 1000;
         const ageMs = Number.isFinite(created) ? now() - created : 0; // unparseable date -> treat as new (keep)
-        return { name, ageMs };
+        return { name, ageMs, ...(sha !== undefined && sha !== '' ? { sha } : {}) };
       })
       .filter((branch) => branch.name !== '');
   };
 }
 
+export interface HeadPr {
+  state?: string;
+  headRefOid?: string;
+}
+
+/**
+ * Whether the PRs sharing a branch's head name prove it finished: a PR in `state` whose head commit
+ * IS the branch's current tip, and no OPEN PR on that head name. A head name alone is not enough —
+ * a fork or a later run can reuse it, and the live branch must survive. No tip known → keep.
+ */
+export function prsProveFinished(prs: readonly HeadPr[], state: 'MERGED' | 'CLOSED', tipSha: string | undefined): boolean {
+  if (tipSha === undefined || tipSha === '') return false;
+  if (prs.some((pr) => pr.state === 'OPEN')) return false;
+  return prs.some((pr) => pr.state === state && pr.headRefOid === tipSha);
+}
+
 /** Shared gh pr-list check. Conservative: on any gh error returns false so the branch is kept. */
-function ghPrChecker(state: 'merged' | 'closed', repoPath: string, repoSlug?: string) {
-  return async (branch: string): Promise<boolean> => {
-    const args = ['pr', 'list', '--head', branch, '--state', state, '--json', 'number'];
+function ghPrChecker(state: 'MERGED' | 'CLOSED', repoPath: string, repoSlug?: string) {
+  return async (branch: string, tipSha?: string): Promise<boolean> => {
+    const args = ['pr', 'list', '--head', branch, '--state', 'all', '--limit', '100', '--json', 'state,headRefOid'];
     if (repoSlug !== undefined) args.push('--repo', repoSlug);
     const result = await execa('gh', args, { cwd: repoPath, reject: false });
     if (result.exitCode !== 0) return false;
     try {
-      return (JSON.parse(result.stdout) as unknown[]).length > 0;
+      const prs = JSON.parse(result.stdout) as unknown;
+      return Array.isArray(prs) && prsProveFinished(prs as HeadPr[], state, tipSha);
     } catch {
       return false;
     }
@@ -242,12 +261,12 @@ function ghPrChecker(state: 'merged' | 'closed', repoPath: string, repoSlug?: st
 
 /** gh-backed merged-PR checker. Conservative: on any gh error it reports NOT merged, so the branch is kept. */
 export function ghMergedPrChecker(repoPath: string, repoSlug?: string): MergedChecker {
-  return ghPrChecker('merged', repoPath, repoSlug);
+  return ghPrChecker('MERGED', repoPath, repoSlug);
 }
 
 /** gh-backed closed-unmerged-PR checker. Conservative: on any gh error it reports NOT abandoned, so the branch is kept. */
 export function ghAbandonedPrChecker(repoPath: string, repoSlug?: string): AbandonedChecker {
-  return ghPrChecker('closed', repoPath, repoSlug);
+  return ghPrChecker('CLOSED', repoPath, repoSlug);
 }
 
 /** Git-backed remover that deletes the branch on the remote (ignores missing). */
