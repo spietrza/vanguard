@@ -248,3 +248,94 @@ describe('createRun always runs with the LLM proxy (#584)', () => {
     expect(runGithubIssue).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The assertions above only prove `deps.ts` itself never writes the raw secret into the args it hands
+ * `runGithubIssue` — but `runGithubIssue` is a whole-module mock there, so they say nothing about the
+ * actual safety boundary: source-adapter.ts's own guard (`deps.llmProxy`), which decides whether a used
+ * provider's real credential ever reaches the Docker sandbox's `secrets`. Exercising that guard means
+ * running the REAL runGithubIssue → githubAdapter → runSourcedIssue chain (only its I/O — `gh`, skills —
+ * swapped out), down to the single line that constructs DockerSandboxProvider, where this block captures
+ * `secrets` and short-circuits before the sandbox would actually start.
+ */
+describe('createRun: the real credential never reaches Docker secrets (source-adapter.ts guard)', () => {
+  const TASK = { id: 'o/r#1', title: 't', description: '', labels: [], children: [], comments: [] };
+  const STOP = 'test boundary: stop right after the sandbox secrets are built';
+
+  /**
+   * Re-import `./deps.js` with `../runners/github.js` wired to the real `runGithubIssue` (only
+   * `githubDepsFromEnv` replaced, mirroring production's shape — an `auth` carrying the real
+   * credential, same as `githubDepsFromEnv` itself computes), and `../sandbox/docker.js` swapped for a
+   * capture that throws right after recording `secrets`.
+   */
+  async function freshCreateRunCapturingDockerSecrets(
+    auth: unknown,
+  ): Promise<{ createRun: ReturnType<typeof productionDeps>['createRun']; capturedSecrets: Array<Record<string, string>> }> {
+    vi.resetModules();
+    vi.doMock('../runners/github.js', async (importActual) => {
+      const actual = await importActual<typeof import('../runners/github.js')>();
+      return { ...actual, githubDepsFromEnv: async (repoPath: string) => ({ auth, repoPath, repoSlug: 'o/r' }) };
+    });
+    vi.doMock('../tasks/github.js', () => ({
+      GitHubTaskFetcher: class {
+        async fetch(): Promise<typeof TASK> {
+          return TASK;
+        }
+      },
+      defaultGhRunner: vi.fn(),
+      linkPullRequest: vi.fn(),
+      addPrFailureLabel: vi.fn(),
+      editGithubLabels: vi.fn(),
+      commentGithubIssue: vi.fn(),
+    }));
+    vi.doMock('../context/skill-registry.js', () => ({ skillRegistryForRun: vi.fn(async () => ({})) }));
+    const capturedSecrets: Array<Record<string, string>> = [];
+    vi.doMock('../sandbox/docker.js', () => ({
+      sandboxImage: (): string => 'vanguard-sandbox:latest',
+      DockerSandboxProvider: class {
+        constructor(opts: { secrets?: Record<string, string> }) {
+          capturedSecrets.push(opts.secrets ?? {});
+          throw new Error(STOP);
+        }
+      },
+    }));
+    const fresh = await import('./deps.js');
+    return { createRun: fresh.productionDeps().createRun, capturedSecrets };
+  }
+
+  afterEach(() => {
+    vi.doUnmock('../runners/github.js');
+    vi.doUnmock('../tasks/github.js');
+    vi.doUnmock('../context/skill-registry.js');
+    vi.doUnmock('../sandbox/docker.js');
+    vi.resetModules();
+  });
+
+  for (const { label, guard, env, auth, provider, secret } of [
+    {
+      label: 'a Claude subscription token',
+      guard: 'llmProxy',
+      env: { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-REAL-TOKEN', ANTHROPIC_API_KEY: undefined },
+      auth: { mode: 'subscription', token: 'sk-ant-oat01-REAL-TOKEN' },
+      provider: 'claude',
+      secret: 'sk-ant-oat01-REAL-TOKEN',
+    },
+    {
+      label: 'a zai key',
+      guard: 'proxyMode',
+      env: { CLAUDE_CODE_OAUTH_TOKEN: undefined, ANTHROPIC_API_KEY: undefined, ZAI_API_KEY: 'zai-REAL-KEY' },
+      auth: undefined,
+      provider: 'zai',
+      secret: 'zai-REAL-KEY',
+    },
+  ] as const) {
+    it(`${label} is withheld from Docker secrets under the proxy — leaks if the ${guard} guard is removed`, async () => {
+      setEnv(env);
+      const { createRun, capturedSecrets } = await freshCreateRunCapturingDockerSecrets(auth);
+      const repoPath = await plainRepo();
+      await expect(createRun({ issueRef: 'o/r#1', repoPath, provider }, () => {})).rejects.toThrow(STOP);
+      expect(capturedSecrets).toHaveLength(1);
+      expect(JSON.stringify(capturedSecrets)).not.toContain(secret);
+    });
+  }
+});

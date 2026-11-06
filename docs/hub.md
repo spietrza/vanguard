@@ -10,7 +10,9 @@ a native app, or running it on a server. See `src/hub/*.ts` and `src/cli/hub.ts`
 pnpm build:ui && pnpm hub --repo /path/to/your/repo
 ```
 
-This opens a browser at the printed URL.
+This opens a browser at the printed launch URL, `http://127.0.0.1:7777/#token=…`. The fragment holds
+the per-launch token the UI needs; the served page itself carries none, so open that exact URL (from
+the terminal, or `docker logs` in container mode) rather than the bare address.
 
 ### Prerequisites
 
@@ -52,11 +54,18 @@ This opens a browser at the printed URL.
 
 ## Runs always use the LLM proxy
 
-Every run started from the hub runs with the LLM proxy whenever the run has a credential the proxy's
+This is not hub-specific: it is `productionDeps()`'s behavior (`src/sidecar/deps.ts`), so it applies to
+**every** run started through the sidecar protocol — `vanguard __sidecar` — which both the hub's own
+dispatch and the desktop app's Task-board **New Run** use identically (the desktop spawns the same
+`vanguard __sidecar` subprocess; see `../apps/desktop/README.md`). A desktop **Launch** command, or
+`vanguard run`/`vanguard watch` invoked directly from a terminal, is a different path — plain CLI
+invocations, which keep the CLI's own opt-in `--llm-proxy` (off by default) instead of this rule.
+
+Every run on that path runs with the LLM proxy whenever the run has a credential the proxy's
 trusted sidecar can hold — a Claude subscription token or `ANTHROPIC_API_KEY`, or z.ai's / OpenRouter's
 key when that provider implements. The sidecar on the host keeps the real credential and the sandbox
 gets a per-run nonce instead, so agent code never sees the token. Unlike the CLI's opt-in
-`--llm-proxy`, the hub has **no switch to turn this off** — no flag, no env var, no
+`--llm-proxy`, this path has **no switch to turn this off** — no flag, no env var, no
 `.vanguard/app.json` setting.
 
 Three kinds of run go without it. There the credential *is* in the sandbox, so the run view shows a
@@ -74,6 +83,12 @@ warning naming the provider rather than leaving the exposure silent:
   endpoint and authenticate on that host, exposing no upstream a sidecar could target, so their key
   is injected into the sandbox.
 
+If the proxy's trusted sidecar itself fails to start — usually a missing or stale sandbox image, since
+it runs inside `vanguard-sandbox:latest` like the egress enclave — the run fails fast rather than
+silently falling back to direct mode or hanging. The run view shows: `Failed to start llm proxy
+<id>: rebuild the sandbox image (docker/build.sh builds vanguard-sandbox:latest), or check
+VANGUARD_SANDBOX_IMAGE if set.`
+
 ## Modes
 
 - **Local mode** — no authentication, binds `127.0.0.1` by default. Intended for running on your own
@@ -87,8 +102,8 @@ never a published port.
 
 ### Allowed Hosts (DNS rebinding)
 
-The hub checks the `Host` header of every request — before serving the SPA, which carries a live
-token — and answers `403` for anything it doesn't recognise, so a page on an attacker-controlled
+The hub checks the `Host` header of every request — before serving the SPA, which holds a live
+token once opened — and answers `403` for anything it doesn't recognise, so a page on an attacker-controlled
 domain cannot rebind that domain to the hub's address and drive it. Allowed by default, on the
 actually-bound port: `localhost`, and any **IP literal** (IPv4, or a bracketed IPv6 — `127.0.0.1`,
 `[::1]`, `0.0.0.0`, a LAN address, a Tailscale address). DNS rebinding can only produce a *hostname*,
@@ -249,7 +264,7 @@ vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no
 | `--host <addr>` | `VANGUARD_HUB_HOST` | `127.0.0.1` |
 | `--port <n>` | `VANGUARD_HUB_PORT` | `7777` (1-65535; an invalid explicit `--port` is a startup error) |
 | `--ui-dir <dir>` | `VANGUARD_HUB_UI_DIR` | `<pkg>/apps/desktop/dist` |
-| `--no-open` | — | opens the printed URL in a browser unless passed |
+| `--no-open` | — | opens the printed launch URL (`/#token=…`) in a browser unless passed |
 
 A missing or unbuilt `--ui-dir` fails at startup, naming `pnpm --dir apps/desktop build`
 (run `pnpm build:ui`) rather than failing on the first request. Binding a non-loopback host
@@ -257,11 +272,13 @@ prints the no-auth warning above and disables `add_project`/`browse_dirs`/`clone
 `VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
 and the project file watchers.
 
-The SPA receives a fresh per-launch token. RPC requests require `x-vanguard-hub-token`; SSE requests
-require the `token` query parameter. Host checks also protect the SPA response against DNS rebinding.
-The token stops a page on another origin from driving the hub; it is not authentication — anyone who
-can fetch `GET /` (any local process, anyone the proxy lets through) reads it out of the HTML, so it
-does not replace authentication at the reverse proxy. Because `/events` carries it as a query
-parameter, it lands in reverse-proxy access logs; it is regenerated on every hub launch, so a logged
-value stops working once the hub restarts (and an already-open page must be reloaded to pick up the
-new one).
+Each launch mints a fresh token. RPC requests require `x-vanguard-hub-token`; SSE requests require
+the `token` query parameter. No route serves the token — not `index.html`, not `/healthz`. The CLI
+prints and opens a launch URL carrying it in the fragment (`/#token=…`), which browsers never send to
+the server; the UI moves it into `sessionStorage` and strips it from the address bar, so a reload
+keeps working but a new tab on the bare URL needs the launch URL again. Behind a reverse proxy, append
+the same `/#token=…` to the public URL. Reaching the port is therefore not enough to drive the hub,
+but the token is a launch secret, not per-user authentication: it does not replace authentication at
+the reverse proxy. Because `/events` carries it as a query parameter, it lands in reverse-proxy access
+logs; it is regenerated on every hub launch, so a logged value stops working once the hub restarts
+(and an already-open page must be given the new launch URL).

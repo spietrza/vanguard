@@ -13,7 +13,7 @@ export interface TypedRunState {
   stages: string[];
   stageState: Record<number, StagePhase>;
   usdSpent: number;
-  /** Non-fatal advisories (e.g. a credential the LLM proxy doesn't cover) — accumulated, never cleared. */
+  /** Non-fatal advisories (e.g. a credential the LLM proxy doesn't cover) — accumulated, deduplicated, never cleared. */
   warnings: string[];
   terminal?: { kind: 'success' | 'no-changes' | 'secret-blocked' | 'error' | 'cancelled'; prUrl?: string; message?: string };
 }
@@ -63,6 +63,8 @@ export function reduceTypedRun(
     case 'cost':
       return { ...state, runId, usdSpent: e.usdSpent }; // cumulative — last wins, never sum
     case 'warning':
+      // Idempotent: backlog and live events overlap on re-attach, so the same warning can arrive twice.
+      if (state.warnings.includes(e.message)) return { ...state, runId };
       return { ...state, runId, warnings: [...state.warnings, e.message] };
     case 'run-end':
       return {
