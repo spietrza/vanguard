@@ -9,13 +9,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const beginRun = vi.fn(() => new AbortController().signal);
 const endRun = vi.fn();
 vi.mock('./cancel.js', () => ({ beginRun: (): AbortSignal => beginRun(), endRun: (): void => endRun() }));
-const startSandboxContext = vi.fn(async (_opts: unknown) => ({ destroy: async (): Promise<void> => {} }));
-vi.mock('../sandbox/sandbox-context.js', () => ({
-  startSandboxContext: (opts: unknown): Promise<unknown> => startSandboxContext(opts),
+// Mirrors startSandboxContext's real shape just enough to exercise deps.ts: when the caller asks for
+// llmProxy, hand back a nonce-bearing dep (never the real credential) like the trusted sidecar would.
+const startSandboxContext = vi.fn(async (opts: { llmProxy?: boolean }) => ({
+  destroy: async (): Promise<void> => {},
+  ...(opts.llmProxy === true ? { llmProxy: { url: 'http://proxy.internal', nonce: 'nonce-xyz', host: 'proxy.internal' } } : {}),
 }));
+vi.mock('../sandbox/sandbox-context.js', () => ({
+  startSandboxContext: (opts: unknown): Promise<unknown> => startSandboxContext(opts as { llmProxy?: boolean }),
+}));
+const githubDepsFromEnv = vi.fn(async () => ({ repoPath: '/r', repoSlug: 'o/r' }));
+const runGithubIssue = vi.fn(async () => ({ prUrl: 'https://example/pr/1' }));
 vi.mock('../runners/github.js', () => ({
-  githubDepsFromEnv: vi.fn(async () => ({ repoPath: '/r', repoSlug: 'o/r' })),
-  runGithubIssue: vi.fn(async () => ({ prUrl: 'https://example/pr/1' })),
+  githubDepsFromEnv: (...args: unknown[]): Promise<unknown> => githubDepsFromEnv(...(args as [])),
+  runGithubIssue: (...args: unknown[]): Promise<unknown> => runGithubIssue(...(args as [])),
 }));
 
 const { productionDeps } = await import('./deps.js');
@@ -28,12 +35,19 @@ async function repoWith(customProviders: unknown): Promise<string> {
   return repo;
 }
 
+/** A repo with no `.vanguard/app.json` at all — loadCustomProviders resolves to []. */
+async function plainRepo(): Promise<string> {
+  return mkdtemp(join(tmpdir(), 'vg-deps-'));
+}
+
 const ENTRY = { name: 'my-proxy', baseUrl: 'https://llm.example.com/api', keyEnv: 'MY_PROXY_API_KEY' };
 
 describe('createRun provider fail-fast (S6)', () => {
   beforeEach(() => {
     beginRun.mockClear();
     startSandboxContext.mockClear();
+    githubDepsFromEnv.mockClear();
+    runGithubIssue.mockClear();
   });
 
   it('unknown provider → BadRequestError BEFORE beginRun and the sandbox (no run record, no cost)', async () => {

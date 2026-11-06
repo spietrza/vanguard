@@ -4,7 +4,7 @@ import type { TypedRunState } from './typedRunReducer';
 
 /** Renders the folded typed-run state: stage progress row, live spend, terminal. */
 export function RunStrip({ state, onCancel }: { state: TypedRunState; onCancel: () => void }) {
-  const { stages, stageState, usdSpent, terminal } = state;
+  const { stages, stageState, usdSpent, warnings, terminal } = state;
   return (
     <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
       <div className="flex items-center gap-2">
@@ -42,6 +42,19 @@ export function RunStrip({ state, onCancel }: { state: TypedRunState; onCancel: 
           );
         })}
       </div>
+      {warnings.length > 0 && (
+        <div className="space-y-1">
+          {warnings.map((message, i) => (
+            <div
+              key={i}
+              data-testid="run-warning"
+              className="rounded border border-amber-600/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-600"
+            >
+              {message}
+            </div>
+          ))}
+        </div>
+      )}
       {terminal !== undefined && (
         <div className="text-xs">
           {terminal.kind === 'success' && terminal.prUrl !== undefined && (

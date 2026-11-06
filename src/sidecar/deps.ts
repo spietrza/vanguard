@@ -4,7 +4,14 @@ import { fetchTaskSpec, listBoardTasks } from '../tasks/board-list.js';
 import { listRepoFiles, readRepoFile } from '../tasks/repo-files.js';
 import { VanguardError } from '../core/errors.js';
 import { loadCustomProviders } from '../agents/custom.js';
-import { assertProvidersResolvable, customEgressHosts, validateProviderChoice, assertEgressCompatible } from '../agents/registry.js';
+import {
+  assertProvidersResolvable,
+  customEgressHosts,
+  validateProviderChoice,
+  assertEgressCompatible,
+  llmProxySupported,
+  subscriptionCredentialProvider,
+} from '../agents/registry.js';
 import { createGithubIssue, createGitlabIssue, createLinearIssue } from '../tasks/create.js';
 import { beginRun, endRun } from './cancel.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
@@ -167,14 +174,33 @@ export function productionDeps(): SidecarDeps {
         throw new BadRequestError(error instanceof Error ? error.message : String(error));
       }
       const extraEgressHosts = customEgressHosts(choice);
+      // A used provider's subscription credential (Codex's CODEX_AUTH_JSON) lands in the sandbox
+      // verbatim regardless of llmProxy (providerSecrets forwards it before consulting proxyMode) —
+      // the proxy offers it no protection.
+      const subscriptionProvider = subscriptionCredentialProvider(choice);
+      // The hub always wants the credential OUT of the sandbox: attempt --llm-proxy for any choice
+      // structurally eligible for it (same combinations the CLI accepts) — there is no hub/sidecar
+      // knob to turn this off for an eligible choice (see docs/hub.md) — UNLESS doing so would only
+      // demand a primary-sidecar (Claude-family) credential this run has no other use for, to protect
+      // a subscription credential the proxy can't touch anyway (a pure Codex-subscription run, no
+      // Claude token set): that combination must still start, not fail on a credential nobody needs.
+      const llmProxy = llmProxySupported(choice) && (subscriptionProvider === undefined || auth !== undefined);
       const signal = beginRun();
       const ctx = await startSandboxContext({
         egress: true,
-        llmProxy: false,
+        llmProxy,
         ...(auth !== undefined ? { auth } : {}),
         ...(provider !== undefined ? { provider } : {}),
         ...(extraEgressHosts.length > 0 ? { extraEgressHosts } : {}),
       });
+      if (subscriptionProvider !== undefined) {
+        onEvent({
+          type: 'warning',
+          message:
+            `${subscriptionProvider}'s subscription credential is not covered by the LLM proxy and is visible ` +
+            'to the agent inside the sandbox for this run.',
+        });
+      }
       try {
         // The RunOptions the sidecar exposes + the sandbox wiring + the event seam, shared across transports.
         const common = {
