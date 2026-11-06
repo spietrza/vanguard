@@ -43,6 +43,8 @@ describe('customProviderError (the one validity predicate)', () => {
     ['non-http scheme', { ...ENTRY, baseUrl: 'ftp://x.example' }, /absolute http/],
     ['missing keyEnv', { name: 'a', baseUrl: ENTRY.baseUrl }, /"keyEnv" must name/],
     ['bad keyEnv grammar', { ...ENTRY, keyEnv: '1BAD' }, /"keyEnv" must name/],
+    ['keyEnv borrowing the subscription token', { ...ENTRY, keyEnv: 'CLAUDE_CODE_OAUTH_TOKEN' }, /must not name a credential/],
+    ['keyEnv borrowing the push token', { ...ENTRY, keyEnv: 'GH_TOKEN' }, /must not name a credential/],
     ['empty model', { ...ENTRY, model: '' }, /"model" must be a non-empty string/],
   ])('rejects %s', (_label, entry, re) => {
     expect(customProviderError(entry, seen)).toMatch(re);

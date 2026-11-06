@@ -8,13 +8,13 @@ GitHub issue comments retain the existing `gh issue view --json comments` source
 
 ## Providers that model no association
 
-GitLab notes carry no association at all, so there is no signal to gate on. A comment whose association field is *absent* therefore classifies as `no-association` and stays trusted: failing closed there would reject Vanguard's own `<tech_spec>`/research notes, parking ready tickets as "needs info", re-posting specs and shipping every MR as a declared-partial PR. GitLab consequently keeps its pre-gate behaviour and gains a boundary only through `--feedback-authors`. A *supplied* association fails closed, including the empty string GitHub's GraphQL omission maps to.
+GitLab notes carry no association at all. The fetcher stamps notes written by the user glab runs as (GET /user, Vanguard's own spec, research and manifest notes) MEMBER; every other note keeps an *absent* association. With no identity signal configured, an absent association classifies as `no-association` and stays trusted, so GitLab keeps its pre-gate behaviour. Once `--feedback-authors` (or a bot login) is set, an unlisted author with no association fails closed: the allowlist is the GitLab boundary. The built-in GitHub bot names (`vanguard`, `github-actions`, `*[bot]`) grant nothing on GitLab, since anyone can register them there; only explicit bot logins count. If the glab user cannot be read, no note is stamped and Vanguard's own notes fail closed under an allowlist too (a warning is logged). A *supplied* association fails closed, including the empty string GitHub's GraphQL omission maps to.
 
-Linear comments are treated as MEMBER because workspace membership gates commenting; guest/public commenting would require revisiting that assumption.
+A Linear comment is treated as MEMBER only when Linear attributes it to a workspace `user`. Comments an integration posts (Slack thread sync, Intercom, Asks) carry `externalUser` or no user at all; they get an empty author and association and fail closed. Vanguard's own comments are posted under the API key owner's user, so they stay trusted.
 
 ## Residual trust widening
 
-- `linear-cli.ts` stamps every comment MEMBER, so Linear gains no boundary from this change.
+- `linear-cli.ts` stamps every comment by a workspace user MEMBER, so any workspace user (guests included) is trusted on Linear.
 - `issue-author` trust means an outsider who opens an issue stays trusted for that issue's `<spec_manifest>` and acceptance criteria — they already control the description those gates read, so the comment adds no reach. It never lets the reporter *suppress* work: the "spec already posted" check and the research iteration markers require bot, association or allowlist trust.
 
 Both are defensible because runs are human-triggered, but they are trust, not verification.
