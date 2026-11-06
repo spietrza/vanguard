@@ -178,13 +178,21 @@ export function productionDeps(): SidecarDeps {
       // verbatim regardless of llmProxy (providerSecrets forwards it before consulting proxyMode) —
       // the proxy offers it no protection.
       const subscriptionProvider = subscriptionCredentialProvider(choice);
+      // A direct-mode-only provider (meridian, a repo custom) cannot run under the proxy at all, so its
+      // key goes into the sandbox too — same user-visible consequence, different reason. The sidecar's
+      // choice carries an implementer and nothing else, so that provider IS the ineligible one (the
+      // reviewer/fallback combinations `llmProxySupported` also rejects cannot arise here).
+      const proxySupported = llmProxySupported(choice);
+      const directOnlyProvider = proxySupported ? undefined : (provider ?? 'claude');
       // The hub always wants the credential OUT of the sandbox: attempt --llm-proxy for any choice
       // structurally eligible for it (same combinations the CLI accepts) — there is no hub/sidecar
-      // knob to turn this off for an eligible choice (see docs/hub.md) — UNLESS doing so would only
-      // demand a primary-sidecar (Claude-family) credential this run has no other use for, to protect
-      // a subscription credential the proxy can't touch anyway (a pure Codex-subscription run, no
-      // Claude token set): that combination must still start, not fail on a credential nobody needs.
-      const llmProxy = llmProxySupported(choice) && (subscriptionProvider === undefined || auth !== undefined);
+      // knob to turn this off for an eligible choice (see docs/hub.md) — UNLESS the only credential left
+      // to protect is a subscription one the proxy can't touch anyway AND the run has no Anthropic-family
+      // credential a primary sidecar could hold (`auth`). A Codex-subscription run is that case: `auth` is
+      // undefined whether or not a Claude token is exported (a codex-only run consumes none), and forcing
+      // the proxy on would both fail for want of a credential nobody needs and drop api.openai.com from
+      // the sandbox allowlist with no key in the OpenAI sidecar to forward with. It must still start.
+      const llmProxy = proxySupported && (subscriptionProvider === undefined || auth !== undefined);
       const signal = beginRun();
       const ctx = await startSandboxContext({
         egress: true,
@@ -193,13 +201,17 @@ export function productionDeps(): SidecarDeps {
         ...(provider !== undefined ? { provider } : {}),
         ...(extraEgressHosts.length > 0 ? { extraEgressHosts } : {}),
       });
-      if (subscriptionProvider !== undefined) {
-        onEvent({
-          type: 'warning',
-          message:
-            `${subscriptionProvider}'s subscription credential is not covered by the LLM proxy and is visible ` +
-            'to the agent inside the sandbox for this run.',
-        });
+      // Whatever the reason the proxy is not holding this run's credential, say it out loud: the user
+      // never asked for the proxy to be off, so without an advisory the sandbox exposure is invisible.
+      // At most one reason is reported — a subscription credential is the more specific exposure.
+      const exposed =
+        subscriptionProvider !== undefined
+          ? `${subscriptionProvider}'s subscription credential is not covered by the LLM proxy and is visible`
+          : directOnlyProvider !== undefined
+            ? `${directOnlyProvider} runs in direct mode, which the LLM proxy cannot cover, so its credential is visible`
+            : undefined;
+      if (exposed !== undefined) {
+        onEvent({ type: 'warning', message: `${exposed} to the agent inside the sandbox for this run.` });
       }
       try {
         // The RunOptions the sidecar exposes + the sandbox wiring + the event seam, shared across transports.

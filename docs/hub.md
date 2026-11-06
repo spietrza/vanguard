@@ -48,6 +48,25 @@ This opens a browser at the printed URL.
    publish the port. `VANGUARD_HUB_ALLOW_ADD=1` enables Add project and Clone repository on a
    non-loopback bind (see [Modes](#modes) and [Coolify / Docker Compose](#coolify--docker-compose)).
 
+## Runs always use the LLM proxy
+
+Every run started from the hub runs with the LLM proxy for providers that support it: a trusted
+sidecar on the host holds the real provider credential and the sandbox gets a per-run nonce instead,
+so agent code never sees the token. Unlike the CLI's opt-in `--llm-proxy`, the hub has **no switch to
+turn this off** — no flag, no env var, no `.vanguard/app.json` setting.
+
+Two kinds of provider run without it. There the credential *is* in the sandbox, so the run view shows
+a warning naming the provider rather than leaving the exposure silent:
+
+- **Codex on a ChatGPT subscription** (`CODEX_AUTH_JSON`). The credential is forwarded into the
+  sandbox verbatim — Codex talks to the ChatGPT backend directly with it, which the proxy does not
+  cover. The run still starts; tracked in #585. Use `CODEX_API_KEY`/`OPENAI_API_KEY` instead to keep
+  the credential out of the sandbox.
+- **Direct-mode-only providers** — Meridian ([MERIDIAN-provider.md](MERIDIAN-provider.md)) and repo
+  custom providers (`.vanguard/app.json` `customProviders`). They point the Claude CLI at their own
+  endpoint and authenticate on that host, exposing no upstream a sidecar could target, so their key
+  is injected into the sandbox.
+
 ## Modes
 
 - **Local mode** — no authentication, binds `127.0.0.1` by default. Intended for running on your own
