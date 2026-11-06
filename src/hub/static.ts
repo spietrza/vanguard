@@ -7,27 +7,24 @@ import { jsonError } from './json-response.js';
 import { isWithinRoot } from './browse.js';
 import { HUB_MARKER } from '../hub-wire.js';
 
-/** Inject the hub marker (and, when given, the per-launch auth token) immediately after `<head>`.
- * Pure string function (its own test target). Throws if no insertion point is found — a silent
- * no-op here means the browser silently takes the Tauri branch and every call throws, which must
- * fail loudly at startup instead. `token` is omitted by the CLI's startup build-check (it only
- * verifies `<head>` exists, before a token has been generated). */
-export function injectHubMarker(html: string, token?: string): string {
+/** Inject the hub marker immediately after `<head>`. Pure string function (its own test target).
+ * Throws if no insertion point is found — a silent no-op here means the browser silently takes the
+ * Tauri branch and every call throws, which must fail loudly at startup instead. The per-launch
+ * token is never part of the page: it reaches the browser only in the launch URL's fragment
+ * (`src/cli/hub.ts`), so fetching `GET /` yields nothing that can drive the hub. */
+export function injectHubMarker(html: string): string {
   const idx = html.indexOf('<head>');
   if (idx === -1) throw new Error('index.html has no <head> — cannot inject the hub marker');
   const insertAt = idx + '<head>'.length;
-  const tokenScript = token !== undefined ? `<script>window.__VANGUARD_HUB_TOKEN__=${JSON.stringify(token)}</script>` : '';
-  return html.slice(0, insertAt) + HUB_MARKER + tokenScript + html.slice(insertAt);
+  return html.slice(0, insertAt) + HUB_MARKER + html.slice(insertAt);
 }
 
 export interface StaticOptions {
   uiDir: string;
-  /** Injected into `index.html` for `transport.ts` to read back and send on `/rpc/*` and `/events`. */
-  token?: string;
 }
 
-/** `index.html` carries a live per-launch token, so no other page may frame it: a framed hub page
- * would run on the hub's own origin and could be driven by clickjacking. Sent with every static
+/** The SPA holds a live per-launch token once opened, so no other page may frame it: a framed hub
+ * page would run on the hub's own origin and could be driven by clickjacking. Sent with every static
  * response (both headers — `X-Frame-Options` for anything that predates `frame-ancestors`). */
 const FRAME_DENY_HEADERS = {
   'x-frame-options': 'DENY',
@@ -79,7 +76,7 @@ export async function serveStatic(opts: StaticOptions, req: IncomingMessage, res
   // SPA fallback: any extensionless path (including `/`) serves index.html with the hub marker.
   try {
     const raw = await readFile(join(opts.uiDir, 'index.html'), 'utf8');
-    const html = injectHubMarker(raw, opts.token);
+    const html = injectHubMarker(raw);
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',

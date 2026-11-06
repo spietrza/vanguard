@@ -107,7 +107,7 @@ describe('hub server', () => {
     ]) {
       const res = await withHost('/', host);
       expect(res.status, host).toBe(200);
-      expect(res.body, host).toContain(hub.token);
+      expect(res.body, host).toContain('__VANGUARD_HUB__');
     }
     for (const host of [
       `127.0.0.1:${port + 1}`, // right address, not the port this socket is bound to
@@ -120,10 +120,14 @@ describe('hub server', () => {
     }
   });
 
-  test('requires the per-launch token for RPC and SSE, and only embeds it in the SPA', async () => {
+  test('requires the per-launch token for RPC and SSE, and no route serves it', async () => {
     expect(hub.token).toMatch(/^[a-f0-9]{64}$/);
-    expect(await (await fetch(baseUrl)).text()).toContain(JSON.stringify(hub.token));
-    expect(await (await fetch(baseUrl + '/healthz')).text()).not.toContain(hub.token);
+    for (const path of ['/', '/index.html', '/some/spa/route', '/healthz']) {
+      const res = await withHost(path, 'localhost:' + (hub.server.address() as AddressInfo).port);
+      expect(res.status, path).toBe(200);
+      expect(res.body, path).not.toContain(hub.token);
+      expect(res.body, path).not.toContain('__VANGUARD_HUB_TOKEN__');
+    }
     for (const token of ['', 'wrong', 'x'.repeat(64)]) {
       const rpc = await fetch(baseUrl + '/rpc/list_runs', {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-vanguard-hub-token': token }, body: '{}',

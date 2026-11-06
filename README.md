@@ -480,7 +480,7 @@ install. One instance per developer or team; agent code runs where the hub runs.
 pnpm install && pnpm build:ui          # once: deps + the UI bundle
 docker/build.sh                        # once: vanguard-sandbox (only needed for runs started from the hub)
 export CLAUDE_CODE_OAUTH_TOKEN=...     # the shell that starts the hub is the env the runs get
-pnpm hub --repo /path/to/your/repo     # http://127.0.0.1:7777
+pnpm hub --repo /path/to/your/repo     # opens http://127.0.0.1:7777/#token=… (the launch URL it prints)
 ```
 
 What you get per project: a **Dashboard** of projects with run counts and spend; a **Task board**

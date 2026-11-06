@@ -49,18 +49,7 @@ describe('injectHubMarker', () => {
     expect(out).toBe(html.replace('<head>', `<head>${marker}`));
   });
 
-  test('injects the per-launch token script after the marker when one is passed', () => {
-    const html = '<!doctype html><html><head><title>x</title></head><body>hi</body></html>';
-    const out = injectHubMarker(html, 'de:ad"beef');
-    expect(out).toBe(
-      html.replace(
-        '<head>',
-        '<head><script>window.__VANGUARD_HUB__=true</script><script>window.__VANGUARD_HUB_TOKEN__="de:ad\\"beef"</script>',
-      ),
-    );
-  });
-
-  test('omits the token script entirely when no token is passed (the CLI build check)', () => {
+  test('never injects a token — the launch URL fragment carries it', () => {
     const out = injectHubMarker('<html><head></head><body></body></html>');
     expect(out).not.toContain('__VANGUARD_HUB_TOKEN__');
     expect(out).toContain('__VANGUARD_HUB__');
@@ -105,14 +94,14 @@ describe('serveStatic', () => {
     expect(indexRes.body).toContain('__VANGUARD_HUB__');
   });
 
-  test('every static response denies framing — the page carries a live hub token', async () => {
+  test('every static response denies framing — the opened page holds a live hub token', async () => {
     await mkdir(join(uiDir, 'assets'), { recursive: true });
     await writeFile(join(uiDir, 'assets', 'x-abc123.js'), 'console.log(1)');
     await writeFile(join(uiDir, 'index.html'), '<html><head></head><body></body></html>');
 
     for (const path of ['/', '/index.html', '/assets/x-abc123.js']) {
       const res = new FakeRes();
-      await serveStatic({ uiDir, token: 'tok' }, fakeReq(path), res as unknown as ServerResponse);
+      await serveStatic({ uiDir }, fakeReq(path), res as unknown as ServerResponse);
       expect(res.statusCode, path).toBe(200);
       expect(res.headers['x-frame-options'], path).toBe('DENY');
       expect(res.headers['content-security-policy'], path).toBe("frame-ancestors 'none'");
