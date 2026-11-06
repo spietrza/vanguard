@@ -55,21 +55,22 @@ stream, depending on which of these is present, in order:
 2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — selects the hub branch instead of the Tauri/mock one.
 3. Otherwise, Tauri — the branch `vitest` and `dev/mockBackend.ts` always exercise.
 
-Alongside the marker, the hub injects a **per-launch token** into `index.html`
-(`window.__VANGUARD_HUB_TOKEN__`), which `transport.ts` sends on every `/rpc/<cmd>` and on `/events`.
-The hub requires it, so **the page must be served by the hub** — only then does it carry a token.
-That makes `VITE_VANGUARD_HUB=1` on Vite's own dev server (`http://localhost:1420`) a dead end: its
-page carries no token, and its same-origin `/rpc/<cmd>` goes to the dev server (which proxies nothing
-to the hub) rather than to a hub that would accept one. There is no escape hatch; to see a change
-against a real hub, rebuild and let the hub serve it (first recipe below). The token is minted
-per launch, so restarting the hub also invalidates an already-open page — the UI says so, and a
-reload picks up the new one.
+The hub requires a **per-launch token** on every `/rpc/<cmd>` and on `/events`. It is never part of
+`index.html`: the hub prints and opens a launch URL that carries it in the fragment
+(`http://127.0.0.1:7777/#token=…`, never sent to the server). `transport.ts` moves it into
+`sessionStorage` (key `vanguard-hub-token`), strips it from the address bar, and sends it from there
+— so a reload keeps working, but a new tab opened on the bare URL has no token until it is given the
+launch URL. **The page must be served by the hub**: `VITE_VANGUARD_HUB=1` on Vite's own dev server
+(`http://localhost:1420`) is a dead end, since its same-origin `/rpc/<cmd>` goes to the dev server
+(which proxies nothing to the hub). There is no escape hatch; to see a change against a real hub,
+rebuild and let the hub serve it (first recipe below). The token is minted per launch, so restarting
+the hub invalidates an already-open page — the UI says so; open the new launch URL to reconnect.
 
 **Build the UI and run the hub against a real repo:**
 
 ```bash
 pnpm --dir apps/desktop build          # emits apps/desktop/dist, which the hub serves
-vanguard hub --repo /path/to/your/repo # from the repo root; prints the URL it opened
+vanguard hub --repo /path/to/your/repo # from the repo root; prints the launch URL it opened
 ```
 
 Reaching the hub under a hostname other than loopback or an IP literal needs that Host allowed —
