@@ -85,7 +85,7 @@ p { max-width: 62ch; }
 
 /* ---------- hero ---------- */
 .hero { align-items: stretch; min-height: calc(100svh - 72px); }
-.hero-copy { grid-column: 1 / 6; align-self: center; padding: 40px 0 56px; }
+.hero-copy { grid-column: 1 / 6; align-self: end; padding: 40px 0 24px; }
 .hero h1 { font-size: var(--step-display); }
 .hero h1 span { display: block; }
 .hero h1 .dim { color: var(--muted); }
@@ -122,7 +122,6 @@ p { max-width: 62ch; }
 .fs-module::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: var(--accent-2); transform: translateY(-1px); }
 .fs-module:hover, .fs-module:focus-visible, .fs-module.swapping { border-color: var(--accent); color: var(--ink); }
 .fs-module.swapping::before { background: var(--accent); }
-.floor-note { position: absolute; right: 24px; top: 24px; text-align: right; z-index: 2; max-width: 46ch; font-size: 16px; line-height: 1.4; color: var(--muted); pointer-events: none; }
 .follow { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 12px; align-items: center; background: color-mix(in srgb, var(--bg) 90%, transparent); border: 1px solid var(--line-strong); padding: 8px 8px 8px 14px; font-size: 16px; z-index: 3; }
 .follow button { background: var(--surface-2); padding: 6px 10px; font-size: 14px; }
 .follow button:hover { background: var(--accent); color: var(--accent-ink); }
@@ -131,6 +130,8 @@ p { max-width: 62ch; }
 
 /* ---------- sections: one hairline above each ---------- */
 .section { margin-top: var(--gap); border-top: 1px solid var(--line); padding-top: 40px; }
+/* The hero's own copy now sits at the bottom of its block (see .hero-copy), so "How it works" needs little extra margin. */
+@media (min-width: 901px) { .hero + .section { margin-top: 24px; } }
 .section > .head { grid-column: 1 / 8; }
 .section > .intro { grid-column: 8 / -1; align-self: end; font-size: var(--step-lead); line-height: 1.4; }
 
@@ -267,17 +268,6 @@ p { max-width: 62ch; }
 .lost p { grid-column: 1 / -1; margin-top: 24px; font-size: var(--step-lead); }
 .lost .btn { grid-column: 1 / -1; justify-self: start; margin-top: 32px; }
 
-/* ---------- proof strip (after the hero) ---------- */
-.proof { border-block: 1px solid var(--line-strong); }
-.proof-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding-block: 28px; max-width: none; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.proof-row b { color: var(--accent); font-weight: 600; }
-.proof-mark { width: 10px; height: 10px; background: var(--accent); transform: rotate(45deg); flex: none; }
-.proof-dim { color: color-mix(in srgb, var(--muted) 70%, transparent); }
-.proof-row a { margin-left: auto; color: var(--ink); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--line-strong); }
-.proof-row a:hover { text-decoration-color: var(--accent); }
-.proof + .section { border-top: 0; }
-@media (max-width: 720px) { .proof-row a { margin-left: 0; } .proof-mark { display: none; } }
-
 @media (max-width: 900px) {
   .links a:not(.btn) { display: none; }
   .hero { min-height: 0; }
@@ -285,7 +275,6 @@ p { max-width: 62ch; }
   .hero-copy { padding: 24px 0 32px; }
   .hero h1 { font-size: clamp(2.6rem, 11.5vw, 4.5rem); }
   .floor-hero { margin: 0 calc(-1 * var(--m)); min-height: 0; aspect-ratio: 4 / 5; }
-  .floor-note { left: var(--m); right: var(--m); top: auto; bottom: 12px; text-align: left; font-size: 14px; }
   .section { padding-top: 28px; }
   .section > .head, .section > .intro, .install, .rename, .faq { grid-column: 1 / -1; }
   .section > .intro { margin-top: 20px; }
@@ -300,6 +289,14 @@ p { max-width: 62ch; }
   .col { scroll-snap-align: start; }
   .hub-screens { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cmd { font-size: 12.5px; padding: 14px; }
+}
+
+@media (max-width: 720px) {
+  /* Narrow floor: only the start, the cells and the PR dock stay legible; the rest crowd and clip. */
+  .fs-module { display: none; }
+  .fs-label { display: none; padding: 15px 9px; }
+  .fs-label[data-station="intake"], .fs-label[data-station="cells"], .fs-label[data-station="outbound"] { display: flex; }
+  .links .btn.small { padding: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
