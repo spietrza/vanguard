@@ -44,6 +44,11 @@ describe('redactTokens', () => {
     expect(redactTokens('account is not active')).toBe('account is not active');
   });
 
+  it('masks a Bearer value under header shapes that carry no literal `Authorization:` prefix', () => {
+    expect(redactTokens(`Authorization=Bearer ${BEARER_CREDENTIAL}`)).toBe('Authorization=Bearer [REDACTED]');
+    expect(redactTokens(`{"authorization": "Bearer ${BEARER_CREDENTIAL}"}`)).toBe('{"authorization": "Bearer [REDACTED]"}');
+  });
+
   it('redacts URL userinfo, bare GitHub/GitLab tokens and Basic auth — the shapes git and gh print into errors', () => {
     const glpat = `glpat-${'Ab1'.repeat(8)}`;
     const ghp = `ghp_${'A1b2c3d4e5'.repeat(4)}`;
@@ -223,6 +228,12 @@ describe('bearer: credential-shaped values only (#625)', () => {
     expect(redactTokens(line)).toBe('Authorization: Bearer [REDACTED]');
     expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+${line}`] }])))
       .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
+  it('masks a standard-base64 token whole, padding and all (no `+/w==` tail left behind)', () => {
+    const token = 'YWJjZGVmZ2hpamtsbW5vcHE+/w==';
+    expect(redactTokens(`Authorization: Bearer ${token}`)).toBe('Authorization: Bearer [REDACTED]');
+    expect(redactTokens(`Bearer ${token}`)).toBe('Bearer [REDACTED]');
   });
 
   it('protects bare credential values', () => {
