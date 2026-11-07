@@ -29,6 +29,21 @@ export function isWithinRoot(root: string, child: string): boolean {
   return child === root || child.startsWith(root + sep);
 }
 
+/** `add_project`'s confinement: the same realpath-both-sides guard `browseDirs` applies, so a
+ * project can only come from somewhere the browse picker could have reached. Returns the realpath,
+ * which is what the caller should store. */
+export async function assertWithinBrowseRoot(root: string, path: string): Promise<string> {
+  const realRoot = await realpath(root);
+  let target: string;
+  try {
+    target = await realpath(resolve(path));
+  } catch {
+    throw new BadRequestError('path does not exist');
+  }
+  if (!isWithinRoot(realRoot, target)) throw new BadRequestError('path escapes the browse root');
+  return target;
+}
+
 /** True if an entry (file or dir, any type) exists directly inside `dir` under `name`. */
 async function hasMarker(dir: string, name: string): Promise<boolean> {
   try {

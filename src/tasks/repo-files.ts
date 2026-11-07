@@ -1,5 +1,5 @@
 import { readFile, realpath } from 'node:fs/promises';
-import { isAbsolute, join, normalize, sep } from 'node:path';
+import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { execa } from 'execa';
 import { VanguardError, visibleError } from '../core/errors.js';
 import { MAX_ATTACHMENT_BYTES } from '../wire.js';
@@ -56,6 +56,17 @@ export function resolveRepoFile(repoPath: string, rel: string): string {
   return join(repoPath, norm);
 }
 
+/** `--error-unmatch` exits nonzero for an untracked or ignored path; `''` is the repo root itself. */
+async function assertTracked(repoPath: string, rel: string, shown: string): Promise<void> {
+  try {
+    if (rel === '') throw new Error('repo root');
+    // --literal-pathspecs: `*` or `:(glob)…` must name one file, not match any tracked file.
+    await execa('git', ['--literal-pathspecs', '-C', repoPath, 'ls-files', '--error-unmatch', '-z', '--', rel]);
+  } catch {
+    throw new VanguardError(`mention path is not a tracked file: ${shown}`);
+  }
+}
+
 /** Read one tracked file, capped at MAX_ATTACHMENT_BYTES (UTF-8). Rejects path traversal. */
 export async function readRepoFile(repoPath: string, rel: string): Promise<ReadRepoFileResult> {
   const abs = resolveRepoFile(repoPath, rel);
@@ -65,11 +76,7 @@ export async function readRepoFile(repoPath: string, rel: string): Promise<ReadR
     // doesn't constrain what the user types), so `@.env`/`@.git/config` would otherwise inline a
     // gitignored secret into a prompt bound for a custom-provider baseUrl (review r3). Only tracked
     // files are readable — `--error-unmatch` exits nonzero for an untracked or ignored path.
-    try {
-      await execa('git', ['-C', repoPath, 'ls-files', '--error-unmatch', '-z', '--', rel]);
-    } catch {
-      throw new VanguardError(`mention path is not a tracked file: ${rel}`);
-    }
+    await assertTracked(repoPath, rel, rel);
     // The lexical check above cannot see symlinks: a TRACKED `notes.md -> /etc/passwd` passes both
     // it and the membership check, and readFile would follow the link out of the checkout — with a
     // custom-provider baseUrl that is an exfiltration channel (review r2). Canonicalize BOTH sides
@@ -78,6 +85,10 @@ export async function readRepoFile(repoPath: string, rel: string): Promise<ReadR
     if (realAbs !== realRoot && !realAbs.startsWith(realRoot + sep)) {
       throw new VanguardError(`mention path escapes the repo: ${rel}`);
     }
+    // Containment alone still lets a tracked `notes.md -> .env` read an untracked, ignored file
+    // inside the checkout: when the path resolved somewhere else, the target must be tracked too.
+    const realRel = relative(realRoot, realAbs);
+    if (realRel !== normalize(rel)) await assertTracked(realRoot, realRel, rel);
     buf = await readFile(realAbs);
   } catch (error) {
     throw visibleError(error);

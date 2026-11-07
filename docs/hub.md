@@ -145,11 +145,11 @@ commands, `false` stays `false`); an error answers `400`/`404`/`500 {"error": {"
 `error.message`, so both sides must keep this envelope.
 
 **`src/hub-wire.ts` is the single source of truth for this envelope, the SSE frame shape, the hub
-marker, and the token's header/query-parameter names** — a zero-import module copied verbatim into
+marker, the token's header name and the events-session path** — a zero-import module copied verbatim into
 `apps/desktop/src/hub-wire.ts` by `pnpm gen:wire`
 (drift caught by `src/wire.test.ts`). The server (`src/hub/server.ts`, `events.ts`, `static.ts`) and the
 browser (`apps/desktop/src/transport.ts`) both call its `encodeResult`/`encodeError`/`decodeResponse`/
-`encodeEvent`/`decodeEvent`/`HUB_MARKER`/`HUB_TOKEN_HEADER`/`HUB_TOKEN_QUERY_PARAM` instead of
+`encodeEvent`/`decodeEvent`/`HUB_MARKER`/`HUB_TOKEN_HEADER`/`HUB_EVENTS_SESSION_PATH` instead of
 hand-rolling either side of the wire. A reconnecting
 SSE client whose `Last-Event-ID` gap exceeds the replay ring gets a `stream-reset` frame instead of a
 replay; `transport.ts` resyncs by re-running its snapshot fetches rather than trusting the stream alone.
@@ -175,7 +175,9 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 The **Add project** dialog has two modes:
 
 - **Existing folder** — browse (`browse_dirs`, confined to the browse root) to a directory that's
-  already a git work tree and add it, exactly as before.
+  already a git work tree and add it, exactly as before. `add_project` applies the same browse-root
+  confinement, so a project outside the browse root cannot be added. To add one outside `$HOME`
+  (the default root), start the hub with `VANGUARD_HUB_BROWSE_ROOT` set to a directory containing it.
 - **Clone repository** — paste a repository URL, pick the parent folder with the same browser, and
   optionally override the folder name (default: the repo name from the URL). The hub clones it under
   the chosen parent and adds it, so a fresh install or a VPS hub with nothing to browse yet doesn't
@@ -288,13 +290,17 @@ prints the no-auth warning above and disables `add_project`/`browse_dirs`/`clone
 `VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
 and the project file watchers.
 
-Each launch mints a fresh token. RPC requests require `x-vanguard-hub-token`; SSE requests require
-the `token` query parameter. No route serves the token — not `index.html`, not `/healthz`. The CLI
+Each launch mints a fresh token. RPC requests require `x-vanguard-hub-token` and a same-origin
+`Origin` header (a request without one is rejected). The SSE stream never takes the token in its
+URL: the UI first `POST`s `/events/session` with the header, and the hub answers with an HttpOnly,
+`SameSite=Strict` cookie scoped to `/events` (an events-only secret, not the token) that the
+`EventSource` sends on every connect and reconnect; a non-browser client can send the header on
+`GET /events` instead. `/healthz` stays unauthenticated for container health checks and answers a
+constant `{"ok":true}`. No route serves the token — not `index.html`, not `/healthz`. The CLI
 prints and opens a launch URL carrying it in the fragment (`/#token=…`), which browsers never send to
 the server; the UI moves it into `sessionStorage` and strips it from the address bar, so a reload
 keeps working but a new tab on the bare URL needs the launch URL again. Behind a reverse proxy, append
 the same `/#token=…` to the public URL. Reaching the port is therefore not enough to drive the hub,
 but the token is a launch secret, not per-user authentication: it does not replace authentication at
-the reverse proxy. Because `/events` carries it as a query parameter, it lands in reverse-proxy access
-logs; it is regenerated on every hub launch, so a logged value stops working once the hub restarts
-(and an already-open page must be given the new launch URL).
+the reverse proxy. It is regenerated on every hub launch, so an already-open page must be given the
+new launch URL once the hub restarts.
