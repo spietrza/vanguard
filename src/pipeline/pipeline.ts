@@ -4,7 +4,7 @@ import { runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
 import { buildXmlPrompt } from '../context/xml-prompt.js';
-import { neutralizePromptTags } from '../context/escape.js';
+import { diffForPrompt } from '../context/escape.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
@@ -290,8 +290,9 @@ export async function runBudgetedStages(
 
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
-      // The diff is agent-written content (file text, quoted issue text): no `<` may open or close a prompt block.
-      PREVIOUS_DIFF: neutralizePromptTags(previous?.diff ?? ''),
+      // The diff is agent-written content (file text, quoted issue text): no `<` may open or close a prompt
+      // block. diffForPrompt also prepends the escaping note, so every stage that shows the diff carries it.
+      PREVIOUS_DIFF: diffForPrompt(previous?.diff ?? ''),
       PREVIOUS_FINAL: previous?.finalText ?? '',
       PREVIOUS_STAGE: prevName,
       PREVIOUS_STAGE_TRUNCATED: previous !== undefined && previous.exitReason !== 'completed' ? 'true' : 'false',
@@ -535,7 +536,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       // inheriting the implementer's reasoning. The files are still on disk in the shared worktree.
       resumePrevious: false,
       promptTemplate:
-        'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\nTicket and spec context (if a <tech_spec> block is present, its Acceptance Criteria and Tests section are mandatory — flag as a high-severity finding any AC or spec-mandated test the diff does not cover, unless the PR body explicitly declares it deferred):\n{{COMMENTS}}\n\nEvery `<` in the diff below is escaped as &lt;; the files on disk hold the real text, so do not report the escaping as a defect.\n\n{{PREVIOUS_DIFF}}\n\nAfter completing your review and any fixes, emit a verdict: if there are no blocking issues, write exactly "No blocking issues." on its own line. If there are high or critical severity issues, also include a structured block: <findings>{"findings":[{"severity":"high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>.\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\nTicket and spec context (if a <tech_spec> block is present, its Acceptance Criteria and Tests section are mandatory — flag as a high-severity finding any AC or spec-mandated test the diff does not cover, unless the PR body explicitly declares it deferred):\n{{COMMENTS}}\n\n{{PREVIOUS_DIFF}}\n\nAfter completing your review and any fixes, emit a verdict: if there are no blocking issues, write exactly "No blocking issues." on its own line. If there are high or critical severity issues, also include a structured block: <findings>{"findings":[{"severity":"high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>.\n\nWhen done, write <promise>COMPLETE</promise>.',
       effort: 'high',
       maxTurns: 20,
       stageCostFraction: 0.25,

@@ -75,14 +75,15 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
 /**
  * Whether the author of issue or PR `number` is trusted to start work: OWNER/MEMBER/COLLABORATOR, an
  * allowlisted login (--feedback-authors) or a GitHub App bot. `gh issue/pr --json` exposes no author
- * association, so this reads the REST issue (PRs are issues there). A failed lookup fails closed.
+ * association, so this reads the REST issue (PRs are issues there). A failed lookup fails closed and
+ * carries the reason in `error`, so callers can log it apart from an untrusted author.
  */
 export async function isTrustedIssueAuthor(
   repo: string,
   number: number | string,
   allowedAuthors: readonly string[] | undefined,
   gh: GhRunner = defaultGhRunner,
-): Promise<{ trusted: boolean; author: string; association: string }> {
+): Promise<{ trusted: boolean; author: string; association: string; error?: string }> {
   try {
     const issue = JSON.parse(await gh(['api', `repos/${repo}/issues/${issueNumber(String(number))}`])) as {
       user?: { login?: string } | null;
@@ -92,8 +93,8 @@ export async function isTrustedIssueAuthor(
     const association = issue.author_association ?? '';
     const trusted = author !== '' && classifyAuthor(author, association, { allowedAuthors }) !== 'untrusted';
     return { trusted, author, association };
-  } catch {
-    return { trusted: false, author: '', association: '' };
+  } catch (error) {
+    return { trusted: false, author: '', association: '', error: error instanceof Error ? error.message : String(error) };
   }
 }
 

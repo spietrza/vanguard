@@ -1303,7 +1303,7 @@ describe('GitHub watch issue-author gate', () => {
       });
       expect(await primitives.listReady()).toEqual([{ id: 'owner/repo#1' }, { id: 'owner/repo#3' }]);
       expect(log).toHaveBeenCalledWith(expect.stringContaining('owner/repo#2 skipped -> issue author @mallory (NONE) is not trusted'));
-      expect(log).toHaveBeenCalledWith(expect.stringContaining('owner/repo#4 skipped'));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('owner/repo#4 skipped -> author lookup failed: HTTP 502'));
     } finally {
       log.mockRestore();
     }

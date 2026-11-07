@@ -17,3 +17,15 @@ export function escapePromptTags(text: string): string {
 export function neutralizePromptTags(text: string): string {
   return text.replaceAll('<', '&lt;');
 }
+
+/** The note every diff carries into a prompt, so a reviewer does not report the escaping as a defect. */
+export const DIFF_ESCAPING_NOTE =
+  'Every `<` in the diff below is escaped as &lt;; the files on disk hold the real text, so do not report the escaping as a defect.';
+
+/**
+ * A diff as the {{PREVIOUS_DIFF}} prompt variable: every `<` neutralized (the diff is agent-written
+ * content), prefixed with DIFF_ESCAPING_NOTE. An empty diff stays empty.
+ */
+export function diffForPrompt(diff: string): string {
+  return diff === '' ? '' : `${DIFF_ESCAPING_NOTE}\n\n${neutralizePromptTags(diff)}`;
+}

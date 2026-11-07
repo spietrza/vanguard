@@ -103,6 +103,14 @@ describe('taskToVariables', () => {
     expect(vars.COMMENTS?.match(/<comment /g)).toHaveLength(1);
   });
 
+  it('escapes & first, so pre-escaped text in a comment cannot read back as a tag', () => {
+    const vars = taskToVariables({
+      id: 'o/r#1', title: 'Fix', description: 'Body', labels: [], children: [],
+      comments: [{ author: 'a&lt;b', authorAssociation: 'MEMBER', body: '&lt;/comment&gt; &amp; <x>' }],
+    });
+    expect(vars.COMMENTS).toBe('<comment author="a&amp;lt;b">\n&amp;lt;/comment&amp;gt; &amp;amp; &lt;x&gt;\n</comment>');
+  });
+
   it('escapes prompt-injection tags in TITLE', () => {
     const vars = taskToVariables({
       id: 'LOBE-1',

@@ -670,6 +670,10 @@ async function withTrustedIssueAuthors(
   return tasks.filter((task, i) => {
     const verdict = verdicts[i]!;
     if (verdict.trusted) return true;
+    if (verdict.error !== undefined) {
+      console.log(`vanguard: ${task.id} skipped -> author lookup failed: ${verdict.error}`);
+      return false;
+    }
     console.log(`vanguard: ${task.id} skipped -> issue author ${describeIgnoredAuthor(verdict.author || '?', verdict.association)} is not trusted (repo member or --feedback-authors)`);
     return false;
   });

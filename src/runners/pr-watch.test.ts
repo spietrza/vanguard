@@ -585,7 +585,7 @@ describe('githubPullRequestWatchPrimitives trust', () => {
   const listed = JSON.stringify([
     { number: 12, title: 'Fix', isDraft: false, author: { login: 'alice' }, headRefOid: 'abc123', labels: [{ name: 'ready for vanguard review' }] },
   ]);
-  const primitivesFor = (gh: GhRunner, extra: { allowedAuthors?: string[]; log?: (line: string) => void } = {}): PullRequestWatchPrimitives =>
+  const primitivesFor = (gh: GhRunner, extra: { allowedAuthors?: string[]; log?: (line: string) => void; hintPr?: number } = {}): PullRequestWatchPrimitives =>
     githubPullRequestWatchPrimitives({
       repoSlug: 'o/r',
       label: 'ready for vanguard review',
@@ -634,5 +634,21 @@ describe('githubPullRequestWatchPrimitives trust', () => {
       return ok(args);
     };
     await expect(primitivesFor(broken, { allowedAuthors: ['alice'] }).listReady()).resolves.toEqual([]);
+  });
+
+  it('logs a failed author lookup as such and fails the run for the pinned PR', async () => {
+    const broken: GhRunner = async (args) => {
+      if (args[0] === 'api') throw new Error('rate limited');
+      if (args[1] === 'list') return listed;
+      return JSON.stringify({ comments: [], reviews: [] });
+    };
+    const logs: string[] = [];
+    const unpinned = await watchPullRequestsOnce(primitivesFor(broken, { log: (line) => logs.push(line) }));
+    expect(logs).toContain('watch-prs o/r#12: skip -> author lookup failed: rate limited');
+    expect(logs.some((line) => line.includes('@?'))).toBe(false);
+    expect(unpinned.failed).toEqual([]);
+
+    const pinned = await watchPullRequestsOnce(primitivesFor(broken, { hintPr: 12 }));
+    expect(pinned).toEqual({ reviewed: [], failed: ['o/r#12'], skipped: [] });
   });
 });

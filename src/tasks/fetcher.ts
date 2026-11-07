@@ -51,13 +51,18 @@ export interface TaskFetcher {
   list: (filter?: TaskFilter) => Promise<Task[]>;
 }
 
+/** `&` first, then `<`/`>`, so an author cannot pre-escape text (`&lt;/comment>`) that reads back as a tag. */
+function escapeCommentText(text: string): string {
+  return escapePromptTags(text.replaceAll('&', '&amp;'));
+}
+
 /**
  * One comment as a delimited block. The author comes from the fetched login, escaped (quotes too), and
  * the body is escaped, so a body cannot close the block or forge another author's comment.
  */
 function renderComment(comment: TaskComment): string {
-  const author = escapePromptTags(comment.author).replaceAll('"', '&quot;');
-  return `<comment author="${author}">\n${escapePromptTags(comment.body)}\n</comment>`;
+  const author = escapeCommentText(comment.author).replaceAll('"', '&quot;');
+  return `<comment author="${author}">\n${escapeCommentText(comment.body)}\n</comment>`;
 }
 
 /**
