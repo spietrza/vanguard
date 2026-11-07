@@ -977,6 +977,17 @@ describe('parseCli', () => {
     expect(without.kind === 'revise-pr' && 'commitAuthor' in without).toBe(false);
   });
 
+  it('parses revise-pr --fallback-provider / --fallback-model, and rejects the same bad combinations as run', () => {
+    const cmd = parseCli(['revise-pr', 'o/r#12', '--provider', 'claude', '--fallback-provider', 'codex', '--fallback-model', 'gpt-5.6-sol'], '/work');
+    expect(cmd.kind === 'revise-pr' && cmd.fallbackProvider).toBe('codex');
+    expect(cmd.kind === 'revise-pr' && cmd.fallbackModel).toBe('gpt-5.6-sol');
+    const without = parseCli(['revise-pr', 'o/r#12'], '/work');
+    expect(without.kind === 'revise-pr' && 'fallbackProvider' in without).toBe(false);
+    expect(parseCli(['revise-pr', 'o/r#12', '--fallback-provider', 'bogus'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('Unknown fallback-provider "bogus"') });
+    expect(parseCli(['revise-pr', 'o/r#12', '--fallback-model', 'x'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('--fallback-model needs --fallback-provider') });
+    expect(parseCli(['revise-pr', 'o/r#12', '--provider', 'claude', '--fallback-provider', 'openrouter'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('Implementer fallback cannot mix') });
+  });
+
   it('parses revise-pr --out (dry-run to a file)', () => {
     const cmd = parseCli(['revise-pr', 'o/r#12', '--out', '.vanguard/revisions/12.md'], '/work');
     expect(cmd.kind === 'revise-pr' && cmd.out).toBe('.vanguard/revisions/12.md');

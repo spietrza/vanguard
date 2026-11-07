@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { WorktreeManager } from '../worktree/manager.js';
 import { runRevisePullRequest } from './revise-pr.js';
+import * as registry from '../agents/registry.js';
 import { selectAgents } from '../agents/registry.js';
+import { AgentError } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { IsolatedSandboxProvider, ExecResult, SandboxConfig } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -1419,4 +1421,74 @@ it('T10: all-untrusted feedback explains itself on the PR and hands the labels b
   // Still no thread reply/resolve mutation and no undraft.
   expect(gh.mock.calls.every(([args]) => !(args.includes('ready') || args.some((arg) => arg.includes('mutation'))))).toBe(true);
   expect(logs.filter((line) => /ignored feedback from @mallory \(NONE\)/.test(line))).toHaveLength(1);
+});
+
+it('T11: a rate-limited provider with no fallback says so on the PR and drops the in-flight label', async () => {
+  const gh = vi.fn(async (args: string[]) => {
+    if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+    if (args[0] === 'pr' && args[1] === 'diff') return '';
+    if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
+    if (args[0] === 'pr' && args[1] === 'review') return '';
+    if (args[0] === 'pr' && args[1] === 'edit') return '';
+    throw new Error('Unexpected mutation: ' + args.join(' '));
+  });
+  const rateLimited: AgentProvider = {
+    name: 'claude-code',
+    async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+      yield { text: 'starting' };
+      throw new AgentError('claude exited 1: API error 429 rate_limit_error');
+    },
+  };
+  await expect(
+    runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: rateLimited,
+      _worktrees: new WorktreeManager(repo),
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    }),
+  ).rejects.toThrow(/429/);
+  // The maintainer learns the run died on a transient limit, and the retry path (`needs revision`)
+  // is left intact — only the in-flight label goes.
+  const notice = gh.mock.calls.map(([args]) => args).find((args) => args[0] === 'pr' && args[1] === 'review' && args.includes('--comment'));
+  expect(notice?.at(-1)).toContain('rate limit');
+  expect(notice?.at(-1)).toContain('needs revision');
+  const editCall = gh.mock.calls.map(([args]) => args).find((args) => args[0] === 'pr' && args[1] === 'edit');
+  expect(editCall?.join(' ')).toContain('--remove-label vanguard:revising');
+  expect(editCall?.join(' ')).not.toContain('needs-human-review');
+});
+
+it('uses the fallback model for the failed stage and subsequent stages', async () => {
+  const primaryInputs: AgentRunInput[] = [];
+  const fallbackInputs: AgentRunInput[] = [];
+  const primary = agentThatCompletes(primaryInputs);
+  primary.run = async function* (input): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+    primaryInputs.push(input);
+    throw new AgentError('HTTP 429');
+  };
+  const spy = vi.spyOn(registry, 'selectAgents').mockReturnValue({
+    agent: primary, fallbackAgent: agentThatCompletes(fallbackInputs),
+    secrets: {}, proxySecrets: {}, injectAnthropicAuth: false,
+  });
+  const gh = vi.fn(async (args: string[]) => {
+    if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+    if (args[0] === 'api' && args[1] === 'graphql' && !args.some((arg) => arg.includes('mutation'))) return makeFeedbackJson();
+    return '';
+  });
+  try {
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo, repoSlug: 'o/r', gh, out: join(repo, 'preview.md'),
+      _sandbox: makeSandbox(), _worktrees: new WorktreeManager(repo), _baseBranch: 'feature-branch',
+      provider: 'claude', fallbackProvider: 'codex', fallbackModel: 'fallback-model',
+    });
+    expect(result.dryRunOut).toBeDefined();
+    expect(primaryInputs).toHaveLength(1);
+    expect(fallbackInputs).toHaveLength(3);
+    expect(fallbackInputs.every((input) => input.model === 'fallback-model')).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
 });
