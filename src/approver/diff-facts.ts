@@ -1,3 +1,4 @@
+import { diffFilesWithPatches, gateConfigPaths, loadGateConfigExtraGlobs } from '../context/gate-config.js';
 import { execa } from 'execa';
 import { resolveRemoteBaseRef } from '../core/base-branch.js';
 import { matchGlob } from './policy.js';
@@ -202,6 +203,9 @@ export async function collectDiffFacts(input: CollectDiffFactsInput): Promise<Di
   const exportsRemoved = countExportsRemoved(tsDiff.stdout, policy.testGlobs);
   const newDependency = await detectNewDependency(repoPath, statuses, mergeBase, headSha);
 
+  const configDiff = await gitOk(repoPath, ['diff', '--no-renames', mergeBase, headSha]);
+  if (configDiff.exitCode !== 0) return { ...emptyDiffFacts(headSha, baseTip, mergeBase), headMoved };
+  const configPaths = gateConfigPaths(diffFilesWithPatches(configDiff.stdout), await loadGateConfigExtraGlobs(repoPath, baseRefName));
   const headPatchId = await patchId(repoPath, mergeBase, headSha);
   let reviewedPatchId: string | undefined;
   let reviewedIsAncestor: boolean | undefined;
@@ -216,6 +220,7 @@ export async function collectDiffFacts(input: CollectDiffFactsInput): Promise<Di
   const mergeTreeHeadClean = await mergeTreeClean(repoPath, baseTip, headSha);
 
   return {
+    gateConfigPaths: configPaths,
     files, lines, paths, testFilesDeleted, testCasesDelta, exportsRemoved, newDependency,
     baseSha: baseTip, headSha, mergeBase,
     headPatchId, reviewedPatchId, reviewedIsAncestor, mergeTreeHeadClean, mergeTreeReviewedClean,

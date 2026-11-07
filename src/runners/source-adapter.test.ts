@@ -1143,4 +1143,14 @@ describe('runSourcedIssue', () => {
     expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ draft: true }));
     expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'visual-proof');
   });
+
+  it.each(['skills/review/SKILL.md', '.github/vanguard-skills/review/SKILL.md', 'skills.lock.json'])('labels and discloses protected config %s', async (path) => {
+    wmDiff.mockResolvedValueOnce(`diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`);
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+    expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'gate-config');
+    expect(publishForReview.mock.calls[0]?.[1]?.body).toContain('## Gate config changed');
+    expect(publishForReview.mock.calls[0]?.[1]?.body).toContain(path);
+  });
+
 });

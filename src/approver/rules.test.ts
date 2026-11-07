@@ -183,3 +183,10 @@ describe('auditSample', () => {
     }
   });
 });
+
+  it.each(['skills/review/SKILL.md', '.github/vanguard-skills/review/SKILL.md', 'skills.lock.json', 'vitest.config.ts'])('escalates protected config %s regardless of path policy', (path) => {
+    const facts = cleanFacts({ diff: cleanDiff({ paths: [path], gateConfigPaths: [path] }) });
+    const result = decide(facts, { ...policy, pathRules: {} }, 'seed-clean-1');
+    expect(result.verdict).toBe('ESCALATE');
+    expect(result.rulesFired).toContain('gate-config-changed');
+  });

@@ -3,7 +3,8 @@ import { instructionSourceNote } from './review-prompt.js';
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import { defaultGlabRunner, encodeProject, glabUser, neutralizeQuickActions } from '../tasks/gitlab.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, omitGeneratedFiles, outputTail, reviewOutcomeUsable, stripReviewMarkers, VERDICT_CONTRADICTION_LOG, verdictContradictsFindings } from './review-prompt.js';
+import { GITLAB_GATE_CONFIG_LABEL } from '../gitlab-labels.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, GATE_CONFIG_REVIEW_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, omitGeneratedFiles, outputTail, reviewOutcomeUsable, stripReviewMarkers, VERDICT_CONTRADICTION_LOG, verdictContradictsFindings } from './review-prompt.js';
 import { redactForPublish } from '../core/secret-scan.js';
 
 export interface MergeRequestReviewTarget {
@@ -20,6 +21,8 @@ export interface MergeRequestForReview extends MergeRequestReviewTarget {
   sha: string;
   targetBranch: string;
   diff: string;
+  /** MR labels. Drives GATE_CONFIG_REVIEW_INSTRUCTION when GITLAB_GATE_CONFIG_LABEL is present. */
+  labels: string[];
 }
 
 export interface MergeRequestReviewOutcome {

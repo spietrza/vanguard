@@ -7,7 +7,7 @@ import { agentAuthFromEnv } from '../agents/auth.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
-import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
+import { githubFailureLabel, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { ProviderChoice } from '../agents/registry.js';
@@ -38,8 +38,7 @@ export function githubAdapter(deps: RunGithubIssueDeps, gh: GhRunner = defaultGh
     closeIssueOnMerge: true,
     publishVerdict: publishReviewVerdict,
     async addFailureLabel(prUrl: string, kind: ProofFailureKind) {
-      const label = kind === 'verify' ? GITHUB_VERIFY_FAILED_LABEL : GITHUB_VISUAL_PROOF_FAILED_LABEL;
-      await addPrFailureLabel(deps.repoPath, prUrl, label);
+      await addPrFailureLabel(deps.repoPath, prUrl, githubFailureLabel(kind));
     },
     async linkPr(issueRef: string, _task: Task, prUrl: string) {
       await linkPullRequest(deps.repoSlug, issueRef, prUrl);

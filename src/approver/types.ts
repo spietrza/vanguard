@@ -46,6 +46,7 @@ export interface ReviewFacts {
 }
 
 export interface DiffFacts {
+  gateConfigPaths?: string[];
   files: number;
   lines: number;
   paths: string[];

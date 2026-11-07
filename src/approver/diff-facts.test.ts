@@ -96,6 +96,11 @@ describe('collectDiffFacts', () => {
     }
   });
 
+  it.each(['skills/review/SKILL.md', '.github/vanguard-skills/review/SKILL.md', 'skills.lock.json'])('collects protected config %s from git', async (path) => {
+    const head = await pushHead(async (cwd) => { await write(cwd, path, 'changed\n'); });
+    expect((await collect(head, head)).gateConfigPaths).toEqual([path]);
+  });
+
   it('counts files, lines and paths against the merge base, and resolves a same-SHA review', async () => {
     const head = await pushHead(async (cwd) => { await write(cwd, 'src/b.ts', 'export const c = 3;\n'); });
     const facts = await collect(head, head);
