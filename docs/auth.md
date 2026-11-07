@@ -38,4 +38,10 @@ CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Personal/Claude OAuth/credential") \
   node dist/cli/index.js run --linear TES-1 --repo . --skills ./skills
 ```
 
+Run the smoke example against a throwaway repo:
+
+```bash
+CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Anthropic/token") pnpm tsx examples/smoke.ts
+```
+
 `op` (1Password CLI) needs `op signin` or the desktop app integration; its sessions can expire between calls, so prefer reading the secrets in the same command that uses them. On a server there is no 1Password — see [deploy.md](deploy.md#auth-subscription-not-api-credit).

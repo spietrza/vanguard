@@ -37,8 +37,8 @@ Every task passes six stations:
 1. **Card.** A ticket on GitHub, GitLab or Linear gets a trigger label (`ready for spec` or `ready for agent`) or moves to a trigger state. A deterministic triage check parks vague tickets at `needs info` before any model is called.
 2. **Spec.** For `ready for spec`, a read-only planning pass researches the codebase and posts a `<tech_spec>` comment. No code is written.
 3. **Sealed cell.** The agent implements the change in a Docker sandbox: non-root, capabilities dropped, no repository token, and optionally no network beyond an allowlist.
-4. **Gates.** The host runs your verify command (Proof of Work), an optional conformance check against the spec, and a secret scan of the outgoing diff. A red gate sends the change back for up to two repair rounds.
-5. **Review.** A second model, optionally from another provider, reviews the diff in a fresh context and posts a verdict.
+4. **Review.** A second model, optionally from another provider, reviews the diff in a fresh context and fixes what it finds, then a simplify pass tidies the change.
+5. **Gates.** The host runs your verify command (Proof of Work), an optional conformance check against the spec, and a secret scan of the outgoing diff. A red gate sends the change back for up to two repair rounds.
 6. **Pull request.** The host pushes the branch and opens the PR, ready for review when every gate passed and a draft otherwise. A human reviews and merges.
 
 Run it once per ticket with `vanguard run`, or let `vanguard watch` (or the GitHub Actions workflows) pick up labelled tickets on their own. Details: [docs/autonomous-loop.md](docs/autonomous-loop.md) and [docs/architecture.md](docs/architecture.md).
@@ -95,7 +95,7 @@ Taskcell runs coding agents on untrusted input, so the agent is treated as hosti
 - **Egress allowlist and LLM proxy.** `--egress` puts the sandbox on an internal network whose only way out is a proxy that allows listed hosts. `--llm-proxy` also keeps the model key in a sidecar and gives the sandbox a per-run nonce.
 - **Secret gate on the outgoing diff.** Before anything is pushed, the diff is scanned for secret patterns and for the exact values of credentials injected into the run. A hit pushes nothing.
 - **CI config is never copied back.** Changes to `.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml` and `.gitlab/**.yml` are dropped, so agent code cannot become CI code.
-- **Trust gates on input.** The GitHub Actions workflows only start for allowlisted issue authors and senders. On GitHub, comments count as instructions only from repository owners, members and collaborators, the issue author, or logins you allowlist with `--feedback-authors`.
+- **Trust gates on input.** The GitHub Actions workflows only start for allowlisted issue authors and senders. On GitHub, comments count as instructions only from repository owners, members and collaborators, the issue author, or logins you allowlist with `--feedback-authors`. On Linear, only workspace members count. GitLab has no association model, so set `--feedback-authors` there to make comment trust a boundary; once it is set, comments from unlisted authors are ignored.
 - **Humans merge.** Taskcell opens pull requests and never merges them. The approver runs in shadow mode and only records what it would decide.
 
 How these fit together: [docs/security/boundaries.md](docs/security/boundaries.md). How they map to the OWASP Top 10 for Agentic Applications and the OWASP Top 10 for LLM Applications: [docs/security/owasp-mapping.md](docs/security/owasp-mapping.md) (a self-assessment, not a certification). To report a vulnerability, see [SECURITY.md](SECURITY.md).
