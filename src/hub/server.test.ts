@@ -35,6 +35,8 @@ function unimplementedDeps(): SidecarDeps {
     fetchSpec: unimplemented,
     listRepoFiles: async () => ({ files: [], capped: false }),
     readRepoFile: unimplemented,
+    listRuns: unimplemented,
+    readRun: unimplemented,
   };
 }
 

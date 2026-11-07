@@ -48,6 +48,8 @@ function fakeDeps(overrides: Partial<SidecarDeps> = {}): SidecarDeps {
     fetchSpec: async () => ({ spec: '' }),
     listRepoFiles: async () => ({ files: [], capped: false }),
     readRepoFile: async () => ({ path: '', content: '', truncated: false }),
+    listRuns: unimplemented,
+    readRun: unimplemented,
     ...overrides,
   };
 }

@@ -2,6 +2,7 @@ import { isAbsolute } from 'node:path';
 import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
 import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { VanguardError } from '../core/errors.js';
+import { isSafeTaskId } from '../core/state-path.js';
 import { coerceFlowDoc, flowDocError, FlowError, FLOW_FILE_RE } from '../flows/repo.js';
 import type { RepoFlowInfo } from '../flows/repo.js';
 import type { FlowDoc } from '../flows/types.js';
@@ -39,6 +40,9 @@ export interface SidecarDeps {
   fetchSpec: (params: FetchSpecParams) => Promise<{ spec: string }>;
   listRepoFiles: (params: ListRepoFilesParams) => Promise<{ files: string[]; capped: boolean }>;
   readRepoFile: (params: ReadRepoFileParams) => Promise<{ path: string; content: string; truncated: boolean }>;
+  /** Run-record read path: the desktop forwards `list_runs`/`read_run` here (one reader — #472). */
+  listRuns: (params: ListRunsParams) => Promise<RunSummary[]>;
+  readRun: (params: ReadRunParams) => Promise<RunDetail>;
 }
 
 /** Repo-scoped flow-file methods (S5). All ride the query pipe, Bound::Timed. */
@@ -88,6 +92,20 @@ export interface ReadRepoFileParams {
   repoPath: string;
   path: string;
 }
+/**
+ * Repo-scoped run listing. Query pipe, Bound::Timed. `repoPath` is a repo-shaped root: the project
+ * itself, or (desktop CI import) the cache dir whose `.vanguard/runs` is the downloaded artifact.
+ */
+export interface ListRunsParams {
+  repoPath: string;
+}
+export interface ReadRunParams {
+  repoPath: string;
+  taskId: string;
+  timestamp: string;
+}
+export type { RunSummary, RunDetail } from '../wire.js';
+import type { RunDetail, RunSummary } from '../wire.js';
 
 /**
  * A task to create on the configured transport. `source`/`label`/`team` come from AppConfig, read on
@@ -236,6 +254,20 @@ function validateReadRepoFile(params: unknown): void {
   }
 }
 
+function validateListRuns(params: unknown): void {
+  requireAbsoluteRepoPath(params);
+}
+
+function validateReadRun(params: unknown): void {
+  const p = requireAbsoluteRepoPath(params);
+  if (typeof p.taskId !== 'string' || !isSafeTaskId(p.taskId)) {
+    throw new BadRequestError('taskId is required and must name a single direct child of the runs root');
+  }
+  if (typeof p.timestamp !== 'string' || p.timestamp.trim() === '') {
+    throw new BadRequestError('timestamp is required and must be a non-blank string');
+  }
+}
+
 /**
  * Validate a writeFlow request and return the coerced doc. Everything pure happens here, before
  * dispatch: shape + unknown-key rejection (the renderer sends a JS object, so parse's typo
@@ -329,6 +361,14 @@ export const CORE_METHODS: Record<string, CoreMethodDef> = {
   readRepoFile: {
     validate: passthrough(validateReadRepoFile),
     call: async (deps, params) => deps.readRepoFile(params as ReadRepoFileParams),
+  },
+  listRuns: {
+    validate: passthrough(validateListRuns),
+    call: async (deps, params) => deps.listRuns(params as ListRunsParams),
+  },
+  readRun: {
+    validate: passthrough(validateReadRun),
+    call: async (deps, params) => deps.readRun(params as ReadRunParams),
   },
   writeFlow: {
     validate: (params) => {

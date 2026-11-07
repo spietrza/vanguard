@@ -5,7 +5,8 @@
 import { readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertStatePath, ensureStateDir, stateDir } from './state-path.js';
-import { readTextNoSymlink, isSafeTaskId } from './run-store.js';
+import { readTextNoSymlink } from './run-store.js';
+import { isSafeTaskId } from './state-path.js';
 
 export interface StageMarker {
   taskId: string;

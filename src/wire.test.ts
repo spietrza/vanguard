@@ -2,8 +2,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { COMMAND_NAMES, HUB_ONLY, TAURI_ONLY, WIRE_PROVIDER_NAMES } from './wire.js';
-import type { AppConfig, BoardChip, BoardTask, CompleteCallArgs, Finding, Project, ReviewVerdict, RunRecord } from './wire.js';
+import type { AppConfig, BoardChip, BoardTask, CompleteCallArgs, Commands, Finding, Project, ReviewVerdict, RunRecord } from './wire.js';
 import { PROVIDER_NAMES } from './agents/registry.js';
+import { isCoreMethod, type SidecarDeps } from './sidecar/sidecar.js';
+
+/** Read a source file these contracts pin, by path relative to src/. */
+function readSource(relPath: string): string {
+  return readFileSync(join(__dirname, relPath), 'utf8');
+}
 
 // Mirrors scripts/gen-desktop-wire.ts (which cannot be imported from src/ — rootDir). The
 // duplication is self-checking: if either side changes header or paths, the byte compare fails.
@@ -15,7 +21,7 @@ function assertByteIdenticalCopy(file: string): void {
 }
 
 function assertZeroImports(file: string): void {
-  const source = readFileSync(join(__dirname, file), 'utf8');
+  const source = readSource(file);
   expect(source).not.toMatch(/^\s*import\b/m);
   expect(source).not.toMatch(/\bfrom\s+['"]/);
   expect(source).not.toMatch(/\bimport\s*\(/);
@@ -24,7 +30,7 @@ function assertZeroImports(file: string): void {
 
 describe('wire contract (S7)', () => {
   it('catalogue matches the registered Tauri commands', () => {
-    const rust = readFileSync(join(__dirname, '../apps/desktop/src-tauri/src/lib.rs'), 'utf8');
+    const rust = readSource('../apps/desktop/src-tauri/src/lib.rs');
     const registered = rust.match(/tauri::generate_handler!\[([\s\S]*?)\]/)?.[1];
     expect(registered).toBeDefined();
     const names = registered!.split(',').map((name) => name.trim().replace(/^sidecar::/, '')).filter(Boolean);
@@ -32,7 +38,7 @@ describe('wire contract (S7)', () => {
   });
 
   it('catalogue matches the implemented hub dispatch cases', () => {
-    const rpc = readFileSync(join(__dirname, 'hub/rpc.ts'), 'utf8');
+    const rpc = readSource('hub/rpc.ts');
     const names = [...rpc.matchAll(/case '([^']+)':/g)].map((match) => match[1]);
     expect(names.sort()).toEqual(COMMAND_NAMES.filter((name) => !(TAURI_ONLY as readonly string[]).includes(name)).sort());
   });
@@ -53,7 +59,7 @@ describe('wire contract (S7)', () => {
   it('BoardTask.waiting is an optional boolean, present in both core and the regenerated desktop copy (T11)', () => {
     expectTypeOf<BoardTask['waiting']>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<{ id: string; title: string; column: 'queued'; state: string }>().toExtend<BoardTask>();
-    const desktop = readFileSync(join(__dirname, '..', 'apps', 'desktop', 'src', 'wire.ts'), 'utf8');
+    const desktop = readSource('../apps/desktop/src/wire.ts');
     expect(desktop).toMatch(/^\s*waiting\?: boolean;$/m);
   });
 
@@ -75,6 +81,31 @@ describe('wire contract (S7)', () => {
 
   it('WIRE_PROVIDER_NAMES mirrors the registry, including order (the one underivable wire value)', () => {
     expect([...WIRE_PROVIDER_NAMES]).toEqual(PROVIDER_NAMES);
+  });
+});
+
+// T9: the run-record read path has ONE producer — src/core/run-store.ts. The hub calls it directly
+// and the desktop forwards `list_runs`/`read_run` over the sidecar pipe, so wire.ts is the contract
+// on both ends; the Rust reader (and its hand-mirror of these structs) must not come back.
+describe('run-record read path (T9)', () => {
+  const RUNS_RS = '../apps/desktop/src-tauri/src/runs.rs';
+
+  it('the desktop forwards both commands to core methods typed by the wire shapes', () => {
+    const source = readSource(RUNS_RS);
+    for (const method of ['listRuns', 'readRun'] as const) {
+      expect(source).toContain(`board_request(state, "${method}"`);
+      expect(isCoreMethod(method)).toBe(true);
+    }
+    expectTypeOf<Awaited<ReturnType<SidecarDeps['listRuns']>>>().toEqualTypeOf<Commands['list_runs']['result']>();
+    expectTypeOf<Awaited<ReturnType<SidecarDeps['readRun']>>>().toEqualTypeOf<Commands['read_run']['result']>();
+  });
+
+  it('runs.rs keeps no reader and no serde hand-mirror of the record shapes', () => {
+    const source = readSource(RUNS_RS);
+    expect(source).not.toMatch(/\bstruct\b/);
+    for (const shape of ['RunRecord', 'AgentUsage', 'RunSummary', 'StageDetail', 'RunDetail', 'Proof', 'VisualProof']) {
+      expect(source).not.toContain(shape);
+    }
   });
 });
 

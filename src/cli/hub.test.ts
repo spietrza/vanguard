@@ -133,6 +133,9 @@ describe('hubCommand', () => {
       // The hub actually bound to this machine's own hostname (a real address on the sandbox's
       // interface), so — unlike the `127.0.0.1`-bound tests — connect to the hostname itself, not
       // to loopback, to reach the socket the printed URL names.
+      // `agent: false` (a fresh per-request agent, not the global one): under Node's
+      // `NODE_USE_ENV_PROXY`, the global agent sends any non-`NO_PROXY` destination — this hostname
+      // included — to `HTTP_PROXY`, which answers 405 instead of the hub.
       const { port } = new URL(url);
       // Its own agent, so the connection goes straight to the socket: a sandbox that exports
       // HTTP_PROXY + NODE_USE_ENV_PROXY=1 (loopback-only NO_PROXY) otherwise sends this request —

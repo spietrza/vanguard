@@ -46,3 +46,8 @@ export async function ensureStateDir(repoPath: string, dir: string): Promise<str
   await mkdir(dir, { recursive: true });
   return dir;
 }
+
+/** Guard against path traversal: a task id must name a single direct child of a state subdirectory. */
+export function isSafeTaskId(taskId: string): boolean {
+  return taskId !== '' && !taskId.includes('/') && !taskId.includes('\\') && !taskId.includes('..') && !isAbsolute(taskId);
+}
