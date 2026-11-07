@@ -1,3 +1,5 @@
+import { loadProviderChoice } from './provider-choice.js';
+import { customEgressHosts } from '../agents/registry.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { runRevisePullRequest } from '../runners/revise-pr.js';
@@ -22,12 +24,14 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  const choice = await loadProviderChoice(cmd);
   const baseDeps = {
+    ...choice,
     ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
     repoPath: cmd.repoPath,
     signal: controller.signal,
     ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.fallbackModel !== undefined ? { fallbackModel: cmd.fallbackModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.maxRounds !== undefined ? { maxRounds: cmd.maxRounds } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
@@ -41,9 +45,10 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
     return;
   }
 
-  const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
+  const auth = agentAuthFromEnv(choice);
   const sandboxContext = await startSandboxContext({
     egress: cmd.egress,
+    extraEgressHosts: customEgressHosts(choice),
     llmProxy: cmd.llmProxy === true,
     ...(auth !== undefined ? { auth } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
