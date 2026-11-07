@@ -57,3 +57,23 @@ export function visibleError(error: unknown): VanguardError {
   const message = error instanceof Error ? error.message : String(error);
   return new VanguardError(message.split('\n').find((l) => l.trim() !== '') ?? message);
 }
+
+/** Matches a provider rate-limit refusal (HTTP 429, or a textual "rate limit" refusal) embedded verbatim
+ *  in an AgentError's message. Distinguishes a transient, retryable condition from every other agent
+ *  failure (crash, bad auth, malformed output). */
+const RATE_LIMIT_RE = /\b429\b|rate.?limit/i;
+
+/** True when `error` is a provider rate-limit refusal, not some other agent failure. */
+export function isRateLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return RATE_LIMIT_RE.test(message);
+}
+
+/**
+ * PR notice posted when a run ends on a provider rate limit with no fallback to rescue it: nothing
+ * retries automatically, so re-labeling is the only way to pick the work back up. Unbranded — a
+ * white-label run shows it too, same as any other hand-back notice.
+ */
+export function rateLimitRetryNotice(label: string): string {
+  return `This run ended because the AI provider hit a rate limit (HTTP 429) — a temporary condition, not a problem with this change. Remove and re-apply the \`${label}\` label to retry once the limit clears.`;
+}

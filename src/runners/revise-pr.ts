@@ -42,6 +42,7 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  withPrimaryFallback,
   STAGE,
 } from '../pipeline/pipeline.js';
 import { droppedCiPathsNote } from '../pipeline/remote-branch.js';
@@ -54,7 +55,7 @@ import { authSecrets } from '../agents/auth.js';
 import { selectAgents, providerKeyEnvNames } from '../agents/registry.js';
 import { GITHUB_REVIEW_LABEL } from '../github-labels.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import { VanguardError } from '../core/errors.js';
+import { VanguardError, isRateLimitError, rateLimitRetryNotice } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestForReview } from './pr-review.js';
 import type { CommandRunner } from '../pipeline/remote-branch.js';
@@ -90,6 +91,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   providerModel?: string;
   /** Model for the review stage. */
   reviewModel?: string;
+  /** Model for every stage that fell back to `fallbackProvider` (ProviderChoice.fallbackProvider); undefined = its default. */
+  fallbackModel?: string;
   /** Git author for the revision commits + white-label toggle: drops the "vanguard" token from the revision marker so a client repo carries no automation branding. Set via --commit-author. */
   commitAuthor?: { name: string; email: string };
   /** Dry-run: write the diff + proposed thread replies to this local file and push/comment NOTHING. Set via --out. */
@@ -398,6 +401,16 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         pipeline = withStageFallback(pipeline, {
           provider: agents.agent,
           ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+        });
+      }
+      // Implementer fallback: on an AgentError from the primary provider (outage, usage limit, revoked
+      // credential, rate limit) runStages retries the stage once on this provider — same contract as
+      // the first delivery's implementer fallback (source-adapter.ts). Every stage on the primary gets
+      // it (implementer, simplifier): the provider that failed one fails the other too.
+      if (agents.fallbackAgent !== undefined) {
+        pipeline = withPrimaryFallback(pipeline, {
+          provider: agents.fallbackAgent,
+          ...(deps.fallbackModel !== undefined ? { model: deps.fallbackModel } : {}),
         });
       }
 
