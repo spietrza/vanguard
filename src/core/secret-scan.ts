@@ -221,7 +221,7 @@ function isPlausibleInjectedSecret(value: string): boolean {
  * call graph and unavailable where the outgoing diff is scanned. A custom provider's `keyEnv` is
  * repo-configured, so no static list can hold it: callers pass those names to injectedSecretValues.
  */
-const INJECTED_SECRET_ENV_VARS = [
+export const INJECTED_SECRET_ENV_VARS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'ANTHROPIC_API_KEY',
   'CODEX_API_KEY',

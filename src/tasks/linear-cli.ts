@@ -24,8 +24,11 @@ interface LinearCliActor {
 
 interface LinearCliCommentNode {
   body?: string | null;
-  user?: LinearCliActor;
-  author?: LinearCliActor;
+  /** The workspace user who wrote it; Linear sets it to null for integration and bot comments. */
+  user?: LinearCliActor | null;
+  author?: LinearCliActor | null;
+  /** Set instead of `user` when an integration (Slack, Intercom, Asks) posted for a non-member. */
+  externalUser?: LinearCliActor | null;
 }
 
 interface LinearCliIssue {
@@ -41,19 +44,25 @@ interface LinearCliIssue {
 
 /**
  * Accepts comments as either an array or a { nodes: [...] } connection; unknown shapes -> [].
- * Every comment is stamped `authorAssociation: 'MEMBER'`: a Linear workspace has no anonymous
- * commenters, so workspace membership IS the trust gate. Without this, Vanguard's own spec
- * comment (posted under the API key owner's human name, which does not match isBotLogin) would be
- * dropped and every Linear run would silently fall back to Part of.
+ * Only a comment Linear attributes to a workspace `user` is stamped `authorAssociation: 'MEMBER'`.
+ * Vanguard's own spec comment is posted under the API key owner's user, so it keeps MEMBER (its
+ * human name does not match isBotLogin; without the stamp every Linear run would fall back to
+ * Part of). A comment an integration posted (Slack sync, Intercom, Asks) carries `externalUser` or
+ * no user at all: it gets author '' and association '', which fails closed like GitHub's omitted
+ * association. The external display name is chosen outside the workspace, so it never becomes
+ * `author`: it would be matched against bot logins and --feedback-authors.
  */
 function parseComments(comments: LinearCliIssue['comments']): TaskComment[] {
   const nodes = Array.isArray(comments) ? comments : (comments?.nodes ?? []);
   return nodes
-    .map((node) => ({
-      author: node.user?.name ?? node.user?.displayName ?? node.author?.name ?? node.author?.displayName ?? '',
-      body: node.body ?? '',
-      authorAssociation: 'MEMBER',
-    }))
+    .map((node) => {
+      const member = node.user ?? node.author ?? undefined;
+      return {
+        author: member?.name ?? member?.displayName ?? '',
+        body: node.body ?? '',
+        authorAssociation: member !== undefined ? 'MEMBER' : '',
+      };
+    })
     .filter((comment) => comment.body !== ''); // attachment-only comments have no body; skip for v1
 }
 

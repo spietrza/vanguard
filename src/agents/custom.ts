@@ -30,6 +30,7 @@ export interface CustomProviderEntry {
 // One repo-name grammar + entry vocabulary + entry shape, shared with the desktop via src/wire.ts (S7).
 import { FLOW_NAME_RE as NAME_RE, KEY_ENV_RE, CUSTOM_PROVIDER_KEYS } from '../wire.js';
 import type { CustomProviderSpec } from '../wire.js';
+import { INJECTED_SECRET_ENV_VARS } from '../core/secret-scan.js';
 
 const ENTRY_KEYS: ReadonlySet<string> = new Set(CUSTOM_PROVIDER_KEYS);
 
@@ -58,6 +59,11 @@ export function customProviderError(entry: unknown, seen: ReadonlySet<string>): 
   }
   if (typeof keyEnv !== 'string' || !KEY_ENV_RE.test(keyEnv)) {
     return `"keyEnv" must name an environment variable (${KEY_ENV_RE.source})`;
+  }
+  // A repo-defined provider must not borrow a credential Vanguard itself holds: its baseUrl is repo-chosen,
+  // so naming e.g. CLAUDE_CODE_OAUTH_TOKEN here would send the operator's token to that host.
+  if ((INJECTED_SECRET_ENV_VARS as readonly string[]).includes(keyEnv)) {
+    return `"keyEnv" must not name a credential Vanguard uses itself (${keyEnv}); give the provider its own variable`;
   }
   if (model !== undefined && (typeof model !== 'string' || model === '')) {
     return '"model" must be a non-empty string when present';

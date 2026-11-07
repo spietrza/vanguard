@@ -12,6 +12,8 @@ export class AgentError extends VanguardError {}
 export class NotImplementedError extends VanguardError {}
 export class StructuredOutputError extends VanguardError {}
 export class WorkflowGuardError extends VanguardError {}
+/** A host write/delete under `.vanguard` refused because a path component is a symlink (or not a directory). */
+export class StatePathError extends VanguardError {}
 
 /** Cap on stack lines carried into an issue comment: enough to name the failing site, short enough to skim. */
 const FAILURE_STACK_LINES = 25;
