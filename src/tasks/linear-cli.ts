@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { VanguardError } from '../core/errors.js';
 import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 /** Runs the `linear` CLI and returns stdout. Injected for testing. */
 export type LinearCliRunner = (args: string[]) => Promise<string>;
@@ -297,7 +298,7 @@ export async function setLinearState(issueId: string, state: string, runner: Lin
 
 /** Add a freeform comment to a Linear issue (e.g. to report a failed run). */
 export async function commentLinearIssue(issueId: string, body: string, runner: LinearCliRunner = defaultRunner): Promise<void> {
-  await runner(['issue', 'comment', 'add', issueId, '--body', body]);
+  await runner(['issue', 'comment', 'add', issueId, '--body', redactForPublish(body)]);
 }
 
 /** Comment a PR link back onto a Linear issue via the CLI (closes the loop). */

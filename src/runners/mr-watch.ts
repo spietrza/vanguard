@@ -5,6 +5,7 @@ import { MergeRequestReviewIncompleteError, hasMergeRequestReviewForHead } from 
 import { stripReviewMarkers } from './review-prompt.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 export interface MergeRequestWatchItem extends MergeRequestReviewTarget {
   title: string;
@@ -190,7 +191,7 @@ export function gitlabMergeRequestWatchPrimitives(
           String(item.iid),
           '--repo', item.project,
           // This note is written by the glab user, so a marker quoted in the error would count for the dedupe.
-          '-m', neutralizeQuickActions(`Vanguard MR review failed: ${stripReviewMarkers(String(error))}${terminal ? ` Re-add the "${opts.label}" label to retry.` : ''}`),
+          '-m', neutralizeQuickActions(`Vanguard MR review failed: ${redactForPublish(stripReviewMarkers(String(error)))}${terminal ? ` Re-add the "${opts.label}" label to retry.` : ''}`),
         ]);
       } catch {
         // note posting is best-effort; always fix the labels

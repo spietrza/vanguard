@@ -145,6 +145,26 @@ export class WorktreeManager {
   }
 
   /**
+   * The diff the secret gate scans: every file rendered as text, so no `.gitattributes` entry
+   * (`-diff`, `binary`), textconv filter or external diff driver can hide content that `git add -A`
+   * would still commit. `--text` also overrides git's own NUL-byte binary detection. Kept apart from
+   * diff() so prompts, previews and run records keep their usual rendering.
+   */
+  async outgoingDiff(worktreePath: string): Promise<string> {
+    try {
+      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
+      const { stdout } = await execa(
+        'git',
+        ['-c', 'core.attributesFile=/dev/null', 'diff', 'HEAD', '--text', '--no-textconv', '--no-ext-diff', '--no-color'],
+        { cwd: worktreePath },
+      );
+      return stdout;
+    } catch (cause) {
+      throw new WorktreeError(`Failed to get outgoing diff ${worktreePath}`, { cause });
+    }
+  }
+
+  /**
    * Paths the worktree changes against HEAD, new files included and both sides of a rename listed.
    * NUL-separated, so no quoting, and unaffected by diff prefix or rename settings in the user's config.
    */

@@ -242,13 +242,26 @@ export const INJECTED_SECRET_ENV_VARS = [
 ] as const;
 
 /**
+ * Env var names of credentials resolved at run start that the static list cannot know (a custom
+ * provider's `keyEnv`). Process-wide and append-only: every default injectedSecretValues() call — the
+ * comment transports, failure comments, step summaries — covers them without threading run config.
+ * Only names live here; values are still read from the env at each call.
+ */
+const registeredSecretEnvVars = new Set<string>();
+
+/** Register a run's extra credential env var names (see registeredSecretEnvVars). Called from selectAgents. */
+export function registerInjectedSecretEnvVars(names: readonly string[]): void {
+  for (const name of names) registeredSecretEnvVars.add(name);
+}
+
+/**
  * Collect the secret values Vanguard itself injected into this run's sandbox (or used to push on its
  * behalf), from the env vars it reads to build them plus any `extraEnvVars` the caller resolved for
  * this run (a custom provider's configured `keyEnv`). Exported so a caller snapshots process.env once;
  * tests pass explicit values straight to scanForInjectedSecrets instead of mutating the environment.
  */
 export function injectedSecretValues(env: NodeJS.ProcessEnv = process.env, extraEnvVars: readonly string[] = []): string[] {
-  const values = [...INJECTED_SECRET_ENV_VARS, ...extraEnvVars]
+  const values = [...INJECTED_SECRET_ENV_VARS, ...registeredSecretEnvVars, ...extraEnvVars]
     .map((name) => env[name])
     .filter((v): v is string => v !== undefined && isPlausibleInjectedSecret(v));
   // Codex writes auth.json; agents can copy individual credentials out of it.
@@ -293,6 +306,16 @@ export function redactInjectedSecrets(text: string, secretValues: readonly strin
   return text;
 }
 
+/**
+ * Mask agent text before it leaves the host (an issue/PR/MR comment, a run record that may become a CI
+ * artifact): exact values of the credentials Vanguard injected first — the patterns cannot recognize an
+ * opaque token such as the Codex refresh_token — then the pattern mask. `secretValues` defaults to a
+ * fresh snapshot of process.env; a caller that knows a run's custom provider `keyEnv` passes its own.
+ */
+export function redactForPublish(text: string, secretValues: readonly string[] = injectedSecretValues()): string {
+  return redactTokens(redactInjectedSecrets(text, secretValues));
+}
+
 export interface InjectedSecretFinding {
   /** Repo-relative path from the diff's `diff --git` / `+++ b/<path>` header, or '(unknown)'. */
   file: string;
@@ -321,9 +344,9 @@ const DIFF_GIT_HEADER = /^diff --git a\/.+ b\/(.+)$/;
  * remaining headers. Findings never carry the matched value, only file + line, so a hit can be
  * reported without ever printing the secret.
  *
- * Not covered: a credential written INSIDE a binary file. `git diff` renders such a file as
- * `Binary files … differ` with no content, so its bytes are out of reach of this scan — only the
- * binary's path is checked.
+ * Feed it WorktreeManager.outgoingDiff: a plain `git diff` renders a binary file (or one an
+ * agent-written `.gitattributes` marks `-diff` / `binary`) as `Binary files … differ` with no content,
+ * leaving only its path in reach of this scan; the `--text` rendering exposes every byte.
  */
 export function scanForInjectedSecrets(diff: string, secretValues: readonly string[]): InjectedSecretFinding[] {
   const variants = injectedSecretVariants(secretValues);

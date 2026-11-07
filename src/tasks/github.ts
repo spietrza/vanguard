@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 export interface GitHubLabel {
   name: string;
@@ -103,7 +104,7 @@ export async function commentGithubIssue(
   body: string,
   gh: GhRunner = defaultGhRunner,
 ): Promise<void> {
-  await gh(['issue', 'comment', issueNumber(issueRef), '--repo', repo, '--body', body]);
+  await gh(['issue', 'comment', issueNumber(issueRef), '--repo', repo, '--body', redactForPublish(body)]);
 }
 
 export async function linkPullRequest(

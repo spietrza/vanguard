@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readFile, readdir, access, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { execa } from 'execa';
 import { beginRun, listRuns, readRun, runsRoot, persistDecisionProbe, persistRunRecord, persistStageOutcomes } from './run-store.js';
 import type { RunResult } from './types.js';
@@ -120,6 +121,77 @@ describe('beginRun — writing', () => {
     expect(log).not.toContain(token);
     expect(log).toContain('[REDACTED-GH]');
     expect(log).toContain('Bearer [REDACTED]');
+  });
+
+  describe('injected credentials the patterns cannot recognize', () => {
+    // Opaque like a Codex refresh_token: no SECRET_PATTERNS entry matches it on its own.
+    const refresh = 'rt_DUMMY8kQ2wZx7Pm4Nv1Lc9Hb3Jt6Ry0Ed5Sa';
+    const custom = 'acme-opaque-key-5532719';
+    const authJson = JSON.stringify({ tokens: { refresh_token: refresh } });
+    // The shapes a tool result takes in a stream-json / codex --json transcript: JSON-escaped and bare.
+    const transcript = [
+      JSON.stringify({ type: 'tool_result', content: JSON.stringify({ tokens: { refresh_token: refresh } }, null, 2) }),
+      JSON.stringify({ type: 'command_execution', command: 'jq -r .tokens.refresh_token', aggregated_output: `${refresh}\n` }),
+      JSON.stringify({ type: 'command_execution', command: 'env', aggregated_output: `ACME_KEY=${custom}\n` }),
+    ].join('\n');
+
+    beforeEach(() => {
+      vi.stubEnv('CODEX_AUTH_JSON', authJson);
+      vi.stubEnv('ACME_KEY', custom);
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('never survives in transcript.log, finalText, proof.json or visual-proof.json', async () => {
+      const writer = beginRun(repo, 'TES-1', TS, { secretEnvVars: ['ACME_KEY'] });
+      await writer.writeStages([
+        { name: 'reviewer', result: { ...result, diff: '', finalText: `Done. refresh=${refresh} key ${custom}`, transcript } },
+      ]);
+      await writer.writeProof({ ...verResult, outputTail: `refresh: ${refresh}` });
+      await writer.writeVisualProof({ ...vpResult, outputTail: `refresh: ${refresh}` });
+      const taskDir = join(runsRoot(repo), 'TES-1');
+      for (const name of await recordFiles('TES-1')) {
+        const text = await readFile(join(taskDir, name), 'utf8');
+        expect(text, name).not.toContain(refresh);
+        expect(text, name).not.toContain(custom);
+      }
+      const log = await readFile(join(taskDir, `${PREFIX}-reviewer.transcript.log`), 'utf8');
+      expect(log).toContain('[REDACTED-INJECTED]');
+      // The rest of the transcript is kept: only the credential is cut out.
+      expect(log).toContain('jq -r .tokens.refresh_token');
+    });
+
+    it('masks a failed visual proof too, re-hashing the did-not-run tail so the proof stays verifiable', async () => {
+      const writer = beginRun(repo, 'TES-1', TS);
+      const tail = `visual proof execution failed: ${refresh}`;
+      const file = await writer.writeVisualProof({ ...vpResult, exitCode: -1, passed: false, outputTail: tail, artifacts: [] });
+      const stored = JSON.parse(await readFile(file, 'utf8'));
+      expect(stored.outputTail).toBe('visual proof execution failed: [REDACTED-INJECTED]');
+      expect(stored.sha256).toBe(createHash('sha256').update(stored.outputTail).digest('hex'));
+      const metric = JSON.parse((await readFile(join(runsRoot(repo), 'metrics.jsonl'), 'utf8')).trim());
+      expect(metric.sha256).toBe(stored.sha256);
+
+      const ranFile = await writer.writeVisualProof({ ...vpResult, exitCode: 1, passed: false, outputTail: tail });
+      const ran = JSON.parse(await readFile(ranFile, 'utf8'));
+      expect(ran.outputTail).not.toContain(refresh);
+      expect(ran.sha256).toBe(vpResult.sha256); // over the full output, not the tail: unchanged
+    });
+
+    it('withholds a stage diff that carries an injected value no pattern recognizes', () =>
+      withWorktree(async (wt) => {
+        const diff = `diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+const k = '${refresh}';\n`;
+        await beginRun(repo, 'TES-1', TS).writeStages([{ name: 'implementer', result: { ...result, worktreePath: wt, diff } }]);
+        const record = JSON.parse(await readFile(join(runsRoot(repo), 'TES-1', `${PREFIX}-implementer.json`), 'utf8'));
+        expect(record.diffOmitted).toBe('secret-scan');
+        expect(await recordFiles('TES-1')).toEqual([`${PREFIX}-implementer.json`]);
+      }));
+
+    it('a custom keyEnv is only known when the run names it (control)', async () => {
+      await beginRun(repo, 'TES-1', TS).writeStages([{ name: 'reviewer', result: { ...result, diff: '', finalText: `key ${custom}` } }]);
+      const record = JSON.parse(await readFile(join(runsRoot(repo), 'TES-1', `${PREFIX}-reviewer.json`), 'utf8'));
+      expect(record.finalText).toBe(`key ${custom}`);
+    });
   });
 
   it('masks finalText in run.json; the .diff stays byte-faithful (the publish gate owns diff secrets)', async () => {
