@@ -273,8 +273,9 @@ async function handleRequest(
       return;
     }
     // No `Secure`: the loopback hub is plain http. SameSite=Strict + HttpOnly + Path=/events keep it
-    // off cross-site requests, out of page script, and off every other route.
-    const cookie = `${auth.eventsCookieName}=${auth.eventsSecret}; Path=/events; HttpOnly; SameSite=Strict`;
+    // off cross-site requests, out of page script, and off every other route. Max-Age (one day) lets
+    // the per-launch names of past hub launches expire instead of piling up.
+    const cookie = `${auth.eventsCookieName}=${auth.eventsSecret}; Path=/events; Max-Age=86400; HttpOnly; SameSite=Strict`;
     writeJson(res, 200, encodeResult(null), { 'set-cookie': cookie, 'cache-control': 'no-store' });
     return;
   }

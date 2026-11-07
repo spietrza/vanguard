@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -323,5 +324,11 @@ describe('readTextNoSymlink', () => {
     const link = join(tmp, 'link.diff');
     await symlink(real, link);
     await expect(readTextNoSymlink(link)).rejects.toThrow();
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a FIFO without blocking on open', async () => {
+    const fifo = join(tmp, 'pipe.diff');
+    execFileSync('mkfifo', [fifo]);
+    await expect(readTextNoSymlink(fifo)).rejects.toThrow('refusing to read a non-regular file');
   });
 });

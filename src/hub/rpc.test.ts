@@ -365,6 +365,7 @@ test('add_project is confined to the browse root, like browse_dirs', async () =>
 
   const inside = join(await realpath(ctx.browseRoot), 'repo');
   await mkdir(join(inside, '.git'), { recursive: true });
-  await dispatchRpc(ctx, 'add_project', { path: inside });
+  // An unresolved spelling (`..`, a symlinked temp dir) is stored as its realpath.
+  await dispatchRpc(ctx, 'add_project', { path: `${ctx.browseRoot}/repo/../repo` });
   expect(await loadPaths(ctx.configDir)).toEqual([inside]);
 });

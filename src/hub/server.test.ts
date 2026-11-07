@@ -199,7 +199,7 @@ describe('hub server', () => {
     });
     expect(session.status).toBe(200);
     const setCookie = session.headers.get('set-cookie')!;
-    expect(setCookie).toMatch(/^vanguard_hub_events_[a-f0-9]{8}=[a-f0-9]{64}; Path=\/events; HttpOnly; SameSite=Strict$/);
+    expect(setCookie).toMatch(/^vanguard_hub_events_[a-f0-9]{8}=[a-f0-9]{64}; Path=\/events; Max-Age=86400; HttpOnly; SameSite=Strict$/);
     expect(setCookie).not.toContain(hub.token);
     const cookie = setCookie.split(';', 1)[0]!;
 

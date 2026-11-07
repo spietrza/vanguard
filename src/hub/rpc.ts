@@ -117,10 +117,9 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
     }
     case 'add_project': {
       assertMutationsAllowed(ctx.bind);
-      const path = requireString(args, 'path');
-      await assertWithinBrowseRoot(ctx.browseRoot, path);
-      await assertGitWorkTreeDir(path);
-      return projects.add(ctx.configDir, path);
+      const real = await assertWithinBrowseRoot(ctx.browseRoot, requireString(args, 'path'));
+      await assertGitWorkTreeDir(real);
+      return projects.add(ctx.configDir, real);
     }
     case 'clone_project': {
       assertMutationsAllowed(ctx.bind);

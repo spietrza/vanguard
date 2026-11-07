@@ -61,7 +61,9 @@ export async function readTextNoSymlink(path: string): Promise<string> {
   if (info.isSymbolicLink()) {
     throw new Error('refusing to read a symlinked file');
   }
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  if (!info.isFile()) throw new Error('refusing to read a non-regular file');
+  // O_NONBLOCK: a FIFO swapped in after the lstat would otherwise block a threadpool thread on open.
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
     if (!(await handle.stat()).isFile()) throw new Error('refusing to read a non-regular file');
     return await handle.readFile('utf8');

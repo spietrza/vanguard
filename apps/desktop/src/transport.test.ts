@@ -51,6 +51,13 @@ function stubSessionFetch(): { url: string; init?: RequestInit }[] {
   return calls;
 }
 
+/** The events-session POST succeeds; every other fetch (the `/events` probe) answers with `probe`. */
+function probeOnly(probe: () => Promise<Response>): (url: string) => Promise<Response> {
+  return vi.fn(async (url: string) =>
+    url === '/events/session' ? new Response(JSON.stringify({ result: null }), { status: 200 }) : probe(),
+  );
+}
+
 afterEach(() => {
   clearMocks();
   delete window.__VANGUARD_HUB__;
@@ -279,7 +286,7 @@ test('a permanently closed SSE stream probes before deciding: the hub\'s own tok
   vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () =>
+    probeOnly(async () =>
       new Response(JSON.stringify({ error: { message: 'invalid hub token', kind: 'bad-request' } }), { status: 401 }),
     ),
   );
@@ -305,7 +312,7 @@ test('a 403 on /events (the Host check, not the hub\'s own token) notifies onHub
   vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () =>
+    probeOnly(async () =>
       new Response(JSON.stringify({ error: { message: 'Host not allowed', kind: 'bad-request' } }), { status: 403 }),
     ),
   );
@@ -330,7 +337,7 @@ test('a 403 on /events (the Host check, not the hub\'s own token) notifies onHub
 test('a network error probing /events (a proxy 502, connection dropped) notifies onHubConnectionIssue, not onHubRestart', async () => {
   window.__VANGUARD_HUB__ = true;
   vi.stubGlobal('EventSource', FakeEventSource);
-  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network error'); }));
+  vi.stubGlobal('fetch', probeOnly(async () => { throw new TypeError('network error'); }));
   const restarts: number[] = [];
   const issues: number[] = [];
   const unlistenRestart = await onHubRestart(() => restarts.push(1));
@@ -344,6 +351,49 @@ test('a network error probing /events (a proxy 502, connection dropped) notifies
   expect(issues).toEqual([1]);
   expect(restarts).toEqual([]);
 
+  unlistenSub();
+  unlistenIssue();
+  unlistenRestart();
+});
+
+test.each([
+  ['a Host-check 403', 403, { error: { message: 'Host not allowed', kind: 'bad-request' } }],
+  ['a reverse proxy 401', 401, { message: 'proxy login required' }],
+  ['a proxy 502', 502, {}],
+])('a failed events-session request (%s) notifies onHubConnectionIssue and opens no stream', async (_label, status, body) => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
+  const restarts: number[] = [];
+  const issues: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenIssue = await onHubConnectionIssue(() => issues.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  for (let i = 0; i < 10 && issues.length === 0; i++) await new Promise((r) => setTimeout(r, 0));
+  expect(issues).toEqual([1]);
+  expect(restarts).toEqual([]);
+  expect(FakeEventSource.instances).toHaveLength(0);
+  unlistenSub();
+  unlistenIssue();
+  unlistenRestart();
+});
+
+test('the hub\'s own token rejection on the events-session request notifies onHubRestart', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ error: { message: 'invalid hub token', kind: 'bad-request' } }), { status: 401 })),
+  );
+  const restarts: number[] = [];
+  const issues: number[] = [];
+  const unlistenRestart = await onHubRestart(() => restarts.push(1));
+  const unlistenIssue = await onHubConnectionIssue(() => issues.push(1));
+  const unlistenSub = await subscribe('event-a', () => {});
+  for (let i = 0; i < 10 && restarts.length === 0; i++) await new Promise((r) => setTimeout(r, 0));
+  expect(restarts).toEqual([1]);
+  expect(issues).toEqual([]);
+  expect(FakeEventSource.instances).toHaveLength(0);
   unlistenSub();
   unlistenIssue();
   unlistenRestart();

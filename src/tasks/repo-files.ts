@@ -60,7 +60,8 @@ export function resolveRepoFile(repoPath: string, rel: string): string {
 async function assertTracked(repoPath: string, rel: string, shown: string): Promise<void> {
   try {
     if (rel === '') throw new Error('repo root');
-    await execa('git', ['-C', repoPath, 'ls-files', '--error-unmatch', '-z', '--', rel]);
+    // --literal-pathspecs: `*` or `:(glob)…` must name one file, not match any tracked file.
+    await execa('git', ['--literal-pathspecs', '-C', repoPath, 'ls-files', '--error-unmatch', '-z', '--', rel]);
   } catch {
     throw new VanguardError(`mention path is not a tracked file: ${shown}`);
   }
