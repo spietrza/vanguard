@@ -55,6 +55,8 @@ describe('gate config detection', () => {
     ['a lifecycle hook npm runs before test', '+    "pretest": "node setup.js",'],
     ['a lifecycle hook npm runs after lint', '-    "postlint": "node check.js",'],
     ['a script a gate delegates to', '+    "test:unit": "vitest run --passWithNoTests",'],
+    ['a gate script whose value looks like a version', '+    "test": "1",'],
+    ['a second pair on a compact line', '+    "execa": "9.1.0", "pretest": "node setup.js",'],
   ])('matches package.json on %s', (_label, patch) => {
     expect(gateConfigPaths([{ path: 'package.json', patch }])).toEqual(['package.json']);
   });

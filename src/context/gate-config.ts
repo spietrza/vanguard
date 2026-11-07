@@ -41,8 +41,10 @@ export const DEFAULT_GATE_CONFIG_GLOBS: readonly string[] = [
 ];
 
 const PACKAGE_JSON_PATH = /(^|[\\/])package\.json$/;
-/** A changed `"key": "value"` line, with the key and the value captured. */
-const CHANGED_STRING_ENTRY_RE = /^[+-]\s*"([^"]+)"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+/** Every `"key": "value"` pair on a line (compact JSON can hold several), key and value captured. */
+const STRING_ENTRY_RE = /"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+/** A gate script, a pre/post hook npm runs around one, or a `<gate>:*` sub-script: always gate config. */
+const GATE_SCRIPT_KEY_RE = /^(?:pre|post)?(?:verify|test|lint|typecheck)(?::.*)?$/;
 /** Values a dependency entry can take: semver ranges, tags and protocol specifiers. */
 const DEPENDENCY_VALUE_RE = /^(?:[\^~<>=*\d]|v\d|latest$|next$|workspace:|npm:|file:|link:|portal:|patch:|catalog:|git[+:]|github:|https?:)/;
 /** Top-level package.json string fields that are not scripts. */
@@ -54,16 +56,20 @@ const NON_SCRIPT_KEYS = new Set(['name', 'version', 'description', 'main', 'modu
  * delegates (`"verify": "pnpm test:unit"`), so an edit to any of them can change what a gate runs.
  * A hunk only carries a few context lines, so it cannot tell which object a line sits in; instead a
  * changed `"key": "value"` line counts unless the value is a dependency specifier or the key a known
- * non-script field. Heuristic, same spirit as the diff-content checks in approver/diff-facts.ts: a
+ * non-script field; a gate script key (or its pre/post hook) counts whatever its value. Heuristic, same spirit as the diff-content checks in approver/diff-facts.ts: a
  * dependency bump never matches, and an odd non-script string field may over-match.
  */
 export function packageJsonScriptsChanged(patch: string): boolean {
   // A changed line that names the scripts object itself (compact JSON, adding or dropping the block).
   if (/^[+-].*"scripts"\s*:/m.test(patch)) return true;
-  return patch.split('\n').some((line) => {
-    const m = CHANGED_STRING_ENTRY_RE.exec(line);
-    return m !== null && !NON_SCRIPT_KEYS.has(m[1] ?? '') && !DEPENDENCY_VALUE_RE.test(m[2] ?? '');
-  });
+  return patch
+    .split('\n')
+    .filter((line) => line.startsWith('+') || line.startsWith('-'))
+    .some((line) =>
+      [...line.matchAll(STRING_ENTRY_RE)].some(([, key = '', value = '']) =>
+        GATE_SCRIPT_KEY_RE.test(key) || (!NON_SCRIPT_KEYS.has(key) && !DEPENDENCY_VALUE_RE.test(value)),
+      ),
+    );
 }
 
 /**
