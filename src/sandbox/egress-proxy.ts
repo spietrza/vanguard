@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { LlmProxyDep } from './llm-proxy.js';
 // Single source of the allow semantics + default allowlist: the same plain-ESM `.mjs` the sidecar
 // imports (see egress-allow.mjs). Re-exported below so existing import sites keep working.
-import { isAllowed, DEFAULT_EGRESS_ALLOWLIST, resolveConnectTarget } from './egress-allow.mjs';
+import { isAllowed, DEFAULT_EGRESS_ALLOWLIST, resolveConnectTarget, connectOptions } from './egress-allow.mjs';
 import { UPSTREAMS } from './llm-proxy-rewrite.mjs';
 
 export { isAllowed, DEFAULT_EGRESS_ALLOWLIST };
@@ -105,7 +105,7 @@ export async function startEgressProxy(
         return;
       }
       if (clientSocket.destroyed) return;
-      const upstream = connect(dest.port, dest.host, () => {
+      const upstream = connect(connectOptions(dest), () => {
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         upstream.write(head);
         upstream.pipe(clientSocket);

@@ -27,4 +27,14 @@ export declare function resolveConnectTarget(
   allowlist: readonly string[],
   trusted?: readonly string[],
   resolve?: EgressResolver,
-): Promise<{ host: string; port: number } | undefined>;
+): Promise<ConnectTarget | undefined>;
+
+/** A tunnel destination; `addresses` (the checked ones) is absent for a trusted host dialled by name. */
+export interface ConnectTarget {
+  host: string;
+  port: number;
+  addresses?: ReadonlyArray<{ address: string; family: number }>;
+}
+
+/** `net.connect` options that dial only the checked addresses (lookup hook), or a trusted host by name. */
+export declare function connectOptions(dest: ConnectTarget): import('node:net').TcpNetConnectOpts;

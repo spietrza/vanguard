@@ -11,7 +11,7 @@ import {
   llmProxyEgressAllowlist,
   DEFAULT_EGRESS_ALLOWLIST,
 } from './egress-proxy.js';
-import { resolveConnectTarget, isPrivateAddress } from './egress-allow.mjs';
+import { resolveConnectTarget, isPrivateAddress, connectOptions } from './egress-allow.mjs';
 import type { LlmProxyDep } from './llm-proxy.js';
 
 describe('isAllowed', () => {
@@ -31,8 +31,23 @@ describe('resolveConnectTarget', () => {
   const dns = (...addresses: string[]) => async (): Promise<Array<{ address: string }>> => addresses.map((address) => ({ address }));
   const allow = ['api.example.com', 'lan.example.com'];
 
-  it('tunnels an allowlisted public host on 443 to the checked address', async () => {
-    expect(await resolveConnectTarget('api.example.com:443', allow, [], dns('203.0.113.7'))).toEqual({ host: '203.0.113.7', port: 443 });
+  it('tunnels an allowlisted public host on 443, dialling only every checked address', async () => {
+    const dest = await resolveConnectTarget('api.example.com:443', allow, [], dns('203.0.113.7', '2606:4700::1111'));
+    expect(dest).toEqual({
+      host: 'api.example.com',
+      port: 443,
+      addresses: [{ address: '203.0.113.7', family: 4 }, { address: '2606:4700::1111', family: 6 }],
+    });
+    const opts = connectOptions(dest!) as { lookup: (h: string, o: { all?: boolean }, cb: (...a: unknown[]) => void) => void };
+    const all = await new Promise((r) => opts.lookup('ignored', { all: true }, (_e, a) => r(a)));
+    expect(all).toEqual(dest!.addresses);
+    const one = await new Promise((r) => opts.lookup('ignored', {}, (_e, a, f) => r([a, f])));
+    expect(one).toEqual(['203.0.113.7', 4]);
+  });
+
+  it('matches bracketed IPv6 allowlist/trusted entries (URL hostname form) against CONNECT targets', async () => {
+    expect(await resolveConnectTarget('[fd00::5]:8443', ['[fd00::5]'], ['[fd00::5]'], dns())).toEqual({ host: 'fd00::5', port: 8443 });
+    expect(await resolveConnectTarget('fd00::5:8443', ['[fd00::5]'], ['[fd00::5]'], dns())).toEqual({ host: 'fd00::5', port: 8443 });
   });
 
   it('refuses any port but 443 for non-trusted hosts', async () => {
@@ -64,6 +79,8 @@ describe('resolveConnectTarget', () => {
     expect(isPrivateAddress('2606:4700::1111')).toBe(false);
     expect(isPrivateAddress('127.0.0.53')).toBe(true);
     expect(isPrivateAddress('not-an-ip')).toBe(false);
+    expect(isPrivateAddress('::ffff:808:808')).toBe(false);
+    for (const ip of ['::ffff:7f00:1', '64:ff9b::a00:1', '2002:c0a8:101::1', '::a00:1', '::']) expect(isPrivateAddress(ip)).toBe(true);
   });
 });
 

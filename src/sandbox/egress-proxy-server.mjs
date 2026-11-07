@@ -7,7 +7,7 @@
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { writeSync } from 'node:fs';
-import { resolveConnectTarget } from './egress-allow.mjs';
+import { resolveConnectTarget, connectOptions } from './egress-allow.mjs';
 
 // Synchronous stdout: `docker logs` reads a pipe, and async console.log buffers can be dropped by
 // process.exit — the crash evidence is the point, so it must flush before death (PR #353 review).
@@ -67,7 +67,7 @@ createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTT
         return;
       }
       if (clientSocket.destroyed) return;
-      const upstream = connect(dest.port, dest.host, () => {
+      const upstream = connect(connectOptions(dest), () => {
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         upstream.write(head);
         upstream.pipe(clientSocket);
