@@ -1,5 +1,5 @@
 // Port of apps/desktop/src-tauri/src/active.rs — see that file for the original Rust implementation.
-import { readdir, stat } from 'node:fs/promises';
+import { lstat, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { OPENROUTER_PRICING } from '../core/openrouter-pricing.js';
 import { readTextNoSymlink } from './runs.js';
@@ -65,7 +65,9 @@ async function newestJsonl(dir: string): Promise<{ path: string; mtimeMs: number
     if (!e.name.endsWith('.jsonl')) continue;
     const path = join(dir, e.name);
     try {
-      const info = await stat(path);
+      // lstat: a symlinked or non-regular `.jsonl` is never offered as a session to tail.
+      const info = await lstat(path);
+      if (!info.isFile()) continue;
       if (best === undefined || info.mtimeMs > best.mtimeMs) {
         best = { path, mtimeMs: info.mtimeMs };
       }

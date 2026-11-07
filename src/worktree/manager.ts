@@ -1,8 +1,10 @@
 import { execa } from 'execa';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { assertSafeBaseBranch } from '../core/base-branch.js';
+import { assertStatePath, stateDir } from '../core/state-path.js';
 import { WorktreeError } from '../core/errors.js';
+import { hostGitArgs } from './host-git.js';
 
 export interface Worktree {
   path: string;
@@ -66,11 +68,23 @@ export class WorktreeManager {
     const name = `${id}-${this.newRunId()}`;
     const branch = `${prefix}${name}`;
     const path = join(this.baseDir, name);
+    await this.assertInsideCheckout(path);
     try {
-      await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
+      await execa('git', hostGitArgs(['worktree', 'add', '-b', branch, path, baseBranch]), { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
       throw new WorktreeError(`Failed to create worktree for ${taskId}`, { cause });
+    }
+  }
+
+  /** The default baseDir is under `.vanguard`: a repo-committed symlink there must not place the
+   * worktree (and every later copy-back write into it) outside the checkout. */
+  private async assertInsideCheckout(path: string): Promise<void> {
+    if (relative(stateDir(this.repoPath), path).startsWith('..')) return; // a caller-chosen baseDir elsewhere
+    try {
+      await assertStatePath(this.repoPath, path);
+    } catch (cause) {
+      throw new WorktreeError(`Refusing to create worktree at ${path}`, { cause });
     }
   }
 
@@ -101,8 +115,9 @@ export class WorktreeManager {
     if (live) return { path, branch };
 
     // Branch exists but its worktree was removed — recreate the worktree on the existing branch.
+    await this.assertInsideCheckout(path);
     try {
-      await execa('git', ['worktree', 'add', path, branch], { cwd: this.repoPath });
+      await execa('git', hostGitArgs(['worktree', 'add', path, branch]), { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
       throw new WorktreeError(`Failed to reuse worktree for ${id}`, { cause });
@@ -111,7 +126,7 @@ export class WorktreeManager {
 
   async isDirty(worktreePath: string): Promise<boolean> {
     try {
-      const { stdout } = await execa('git', ['status', '--porcelain'], { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['status', '--porcelain']), { cwd: worktreePath });
       return stdout.trim() !== '';
     } catch (cause) {
       throw new WorktreeError(`Failed to check worktree status ${worktreePath}`, { cause });
@@ -121,11 +136,31 @@ export class WorktreeManager {
   async diff(worktreePath: string): Promise<string> {
     try {
       // -N (intent-to-add) so brand-new untracked files appear in `git diff HEAD`.
-      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
-      const { stdout } = await execa('git', ['diff', 'HEAD'], { cwd: worktreePath });
+      await execa('git', hostGitArgs(['add', '-A', '-N']), { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['diff', 'HEAD']), { cwd: worktreePath });
       return stdout;
     } catch (cause) {
       throw new WorktreeError(`Failed to get worktree diff ${worktreePath}`, { cause });
+    }
+  }
+
+  /**
+   * The diff the secret gate scans: every file rendered as text, so no `.gitattributes` entry
+   * (`-diff`, `binary`), textconv filter or external diff driver can hide content that `git add -A`
+   * would still commit. `--text` also overrides git's own NUL-byte binary detection. Kept apart from
+   * diff() so prompts, previews and run records keep their usual rendering.
+   */
+  async outgoingDiff(worktreePath: string): Promise<string> {
+    try {
+      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
+      const { stdout } = await execa(
+        'git',
+        ['-c', 'core.attributesFile=/dev/null', 'diff', 'HEAD', '--text', '--no-textconv', '--no-ext-diff', '--no-color'],
+        { cwd: worktreePath },
+      );
+      return stdout;
+    } catch (cause) {
+      throw new WorktreeError(`Failed to get outgoing diff ${worktreePath}`, { cause });
     }
   }
 
@@ -135,8 +170,8 @@ export class WorktreeManager {
    */
   async changedPaths(worktreePath: string): Promise<string[]> {
     try {
-      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
-      const { stdout } = await execa('git', ['diff', 'HEAD', '--name-only', '--no-renames', '-z'], { cwd: worktreePath });
+      await execa('git', hostGitArgs(['add', '-A', '-N']), { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['diff', 'HEAD', '--name-only', '--no-renames', '-z']), { cwd: worktreePath });
       return stdout.split('\0').filter((path) => path !== '');
     } catch (cause) {
       throw new WorktreeError(`Failed to list worktree changes ${worktreePath}`, { cause });
@@ -150,7 +185,7 @@ export class WorktreeManager {
    */
   async commitMessages(worktreePath: string, baseRef: string): Promise<string[]> {
     try {
-      const { stdout } = await execa('git', ['log', `${baseRef}..HEAD`, '--format=%B%x00'], { cwd: worktreePath });
+      const { stdout } = await execa('git', hostGitArgs(['log', `${baseRef}..HEAD`, '--format=%B%x00']), { cwd: worktreePath });
       return stdout
         .split('\0')
         .map((m) => m.trim())

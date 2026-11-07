@@ -96,7 +96,7 @@ describe('hub server', () => {
     expect((await withHost('/', 'hub.example:1234')).status).toBe(403);
   });
 
-  test('an IP-literal Host on the bound port needs no --allowed-host (DNS rebinding cannot make one)', async () => {
+  test('an IP-literal or localhost Host needs no --allowed-host on any port (DNS rebinding cannot make one)', async () => {
     const { port } = hub.server.address() as AddressInfo;
     for (const host of [
       `127.0.0.1:${port}`,
@@ -104,14 +104,18 @@ describe('hub server', () => {
       `0.0.0.0:${port}`, // what the browser sends for the URL `--host 0.0.0.0` prints and opens
       `192.168.7.5:${port}`, // a LAN / Tailscale address reached directly
       `[::1]:${port}`,
+      // A port other than the one this socket is bound to: `docker run -p 8080:7777`,
+      // `ssh -L 8080:localhost:7777` and `kubectl port-forward` all put a different port on the
+      // Host header than the one the hub actually listens on inside the container/pod.
+      `127.0.0.1:${port + 1}`,
+      `localhost:${port + 1}`,
+      '127.0.0.1', // no port at all — defaults to 80, which is also fine: the hostname carries the protection
     ]) {
       const res = await withHost('/', host);
       expect(res.status, host).toBe(200);
-      expect(res.body, host).toContain(hub.token);
+      expect(res.body, host).toContain('__VANGUARD_HUB__');
     }
     for (const host of [
-      `127.0.0.1:${port + 1}`, // right address, not the port this socket is bound to
-      '127.0.0.1',
       '::1', // an IPv6 literal must be bracketed to be a Host
       `hub.internal:${port}`, // a hostname — only an explicit --allowed-host carries one
       `127.0.0.1:${port}x`,
@@ -120,10 +124,14 @@ describe('hub server', () => {
     }
   });
 
-  test('requires the per-launch token for RPC and SSE, and only embeds it in the SPA', async () => {
+  test('requires the per-launch token for RPC and SSE, and no route serves it', async () => {
     expect(hub.token).toMatch(/^[a-f0-9]{64}$/);
-    expect(await (await fetch(baseUrl)).text()).toContain(JSON.stringify(hub.token));
-    expect(await (await fetch(baseUrl + '/healthz')).text()).not.toContain(hub.token);
+    for (const path of ['/', '/index.html', '/some/spa/route', '/healthz']) {
+      const res = await withHost(path, 'localhost:' + (hub.server.address() as AddressInfo).port);
+      expect(res.status, path).toBe(200);
+      expect(res.body, path).not.toContain(hub.token);
+      expect(res.body, path).not.toContain('__VANGUARD_HUB_TOKEN__');
+    }
     for (const token of ['', 'wrong', 'x'.repeat(64)]) {
       const rpc = await fetch(baseUrl + '/rpc/list_runs', {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-vanguard-hub-token': token }, body: '{}',

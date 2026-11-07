@@ -147,7 +147,7 @@ vi.mock('../core/vanguard.js', () => ({
     baseBranch: 'main',
     // Production records the SHA the worktree was cut from; a recognisable stand-in keeps the assertions honest.
     startRef: '0000sha',
-    wm: { diff: wmDiff, commitMessages: wmCommitMessages },
+    wm: { diff: wmDiff, outgoingDiff: wmDiff, commitMessages: wmCommitMessages },
   })),
   disposeContext: vi.fn(async () => {}),
   runAgent: (...args: unknown[]) => runAgent(...(args as [])),
@@ -623,7 +623,7 @@ describe('runSourcedIssue', () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
-    expect(beginRun.mock.calls[0]).toEqual(['/repo', 'gl-1']);
+    expect(beginRun.mock.calls[0]).toEqual(['/repo', 'gl-1', undefined, { secretEnvVars: [] }]);
     expect(writeStages).toHaveBeenCalledTimes(1);
     expect(writeStages.mock.calls[0]).toEqual([[stageOutcome('reviewer')], { flow: 'default', provider: 'claude', prUrl: MR_URL }]);
   });

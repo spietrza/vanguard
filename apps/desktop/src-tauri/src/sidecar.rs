@@ -60,7 +60,8 @@ pub struct SidecarProc {
     reader: BufReader<ChildStdout>,
 }
 
-/// Spawn the sidecar if it isn't already running. Mirrors `spawn.rs`: launch through `sh -c` so
+/// Spawn the sidecar if it isn't already running. Launch through a fixed `sh -c` string (no config
+/// value is interpolated) so
 /// `vanguard` resolves on the same PATH the CLI shell-out uses, inheriting the app environment (so
 /// operator LLM/platform credentials pass through). `exec` replaces the shell so the child owns the
 /// stdio pipes directly.
@@ -261,10 +262,13 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
 /// while passing the inherited credential, so a per-request value would make the destination of the
 /// OAuth token a parameter of an IPC call. It is read from `app.json` here instead, so config — not
 /// the caller — decides where the credential goes, and there is one source of truth for it.
+/// `app.json` is repo content, though, so `__complete` itself refuses any origin other than the
+/// Anthropic API unless the operator lists it in `VANGUARD_CHAT_ALLOWED_ORIGINS` (src/api/complete.ts).
 ///
-/// Scope of that, stated honestly: it is hygiene, not a security boundary. `write_app_config` accepts
-/// a whole AppConfig from the renderer, so a caller can persist a `chatBaseUrl` and then complete. And
-/// `spawn_run` hands the renderer arbitrary `sh -c` anyway — the webview is a TRUSTED surface in this
+/// Scope of the substitution, stated honestly: it is hygiene, not a security boundary.
+/// `write_app_config` accepts a whole AppConfig from the renderer, so a caller can persist a
+/// `chatBaseUrl` and then complete (the origin allowlist above still applies). And `spawn_run` hands
+/// the renderer arbitrary process execution anyway — the webview is a TRUSTED surface in this
 /// app, and anything able to execute JS in it already has the machine. What that trust rests on is
 /// that nothing rendered can *become* JS: `Markdown` is react-markdown with no `rehype-raw`, so HTML in
 /// model output and task data is escaped, not executed. Keep it that way; adding `rehype-raw` to that
