@@ -985,16 +985,20 @@ describe('seedWorktree', () => {
     expect(existsSync(ctx.worktreePath)).toBe(false);
   });
 
-  it('propagates seed errors without starting or copying into a sandbox', async () => {
+  it('propagates seed errors without starting or copying into a sandbox, and orphans no worktree', async () => {
     const { sandbox } = makeSandbox();
     sandbox.start = vi.fn();
     sandbox.copyIn = vi.fn();
     const error = new Error('seed failed');
+    let seeded = '';
     await expect(prepareContext({ taskId: 'seed-fail', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, {
-      seedWorktree: async () => { throw error; },
+      // A seed that fails part way: the half-written file leaves the worktree dirty.
+      seedWorktree: async (path) => { seeded = path; await writeFile(join(path, 'half-seeded'), 'partial'); throw error; },
     })).rejects.toBe(error);
     expect(sandbox.start).not.toHaveBeenCalled();
     expect(sandbox.copyIn).not.toHaveBeenCalled();
+    expect(existsSync(seeded)).toBe(false);
+    expect((await execa('git', ['worktree', 'list'], { cwd: repo })).stdout).not.toContain(seeded);
   });
 });
 
