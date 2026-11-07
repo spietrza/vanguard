@@ -238,6 +238,14 @@ describe('bearer: credential-shaped values only (#625)', () => {
       .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
   });
 
+  it('a repeated scheme word is not taken as the value', () => {
+    const tok = 'a1b2c3d4'.repeat(4);
+    expect(redactTokens(`Bearer Bearer ${tok}`)).toBe('Bearer Bearer [REDACTED]');
+    expect(redactTokens(`Authorization: Bearer Bearer ${tok}`)).toBe('Authorization: Bearer Bearer [REDACTED]');
+    expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+const h = "Bearer Bearer ${tok}";`] }])))
+      .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
   it('masks a standard-base64 token whole, padding and all (no `+/w==` tail left behind)', () => {
     const token = 'YWJjZGVmZ2hpamtsbW5vcHE+/w==';
     expect(redactTokens(`Authorization: Bearer ${token}`)).toBe('Authorization: Bearer [REDACTED]');

@@ -97,7 +97,7 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     name: 'bearer',
     // Broad on purpose: redaction masks every value after the scheme (over-masking a log is
     // harmless). Prose filtering lives in the gate-only `refine` below.
-    re: /((?:\bAuthorization["']?\s*[:=]\s*["']?)?\bBearer\s+)([A-Za-z0-9._~+/=-]+)/gi,
+    re: /((?:\bAuthorization["']?\s*[:=]\s*["']?)?(?:\bBearer\s+)+)([A-Za-z0-9._~+/=-]+)/gi,
     replacement: '$1[REDACTED]',
     // An explicit Authorization header always counts; a bare scheme word counts only before a long
     // value with a digit or separator, so English prose after it does not block a push.
