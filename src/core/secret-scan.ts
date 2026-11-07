@@ -91,15 +91,18 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // integrity hashes (e.g. pnpm-lock.yaml `integrity: sha512-...eyJ...`), which are content hashes,
   // not secrets. Real JWTs always carry two internal dots; integrity hashes never do.
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, replacement: '[REDACTED-JWT]' },
-  // Explicit authorization headers are unambiguous. Bare scheme mentions need a long value
-  // containing a digit or separator to distinguish credentials from prose (#625); that branch also
-  // covers header shapes with no literal `Authorization:` (`Authorization=Bearer …`, `"authorization": "Bearer …"`).
-  // The value class spans the full base64/base64url alphabet, so a padded token is masked entire —
-  // dropping `~+/=` would leave its `…+/w==` tail in the log.
+  // The prefix group also takes `Authorization=` and JSON `"authorization": "` shapes. The value class
+  // spans the full base64/base64url alphabet, so a padded token is masked whole (#635).
   {
     name: 'bearer',
-    re: /(\bAuthorization\s*:\s*Bearer\s+|\bBearer\s+(?=[A-Za-z0-9._~+/=-]{20,})(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-]))[A-Za-z0-9._~+/=-]+/gi,
+    // Broad on purpose: redaction masks every value after the scheme (over-masking a log is
+    // harmless). Prose filtering lives in the gate-only `refine` below.
+    re: /((?:\bAuthorization["']?\s*[:=]\s*["']?)?\bBearer\s+)([A-Za-z0-9._~+/=-]+)/gi,
     replacement: '$1[REDACTED]',
+    // An explicit Authorization header always counts; a bare scheme word counts only before a long
+    // value with a digit or separator, so English prose after it does not block a push.
+    refine: (value: string, prefix?: string): boolean =>
+      /authorization/i.test(prefix ?? '') || (value.length >= 20 && /[0-9._~+/=-]/.test(value)),
   },
   {
     name: 'json-token-field',

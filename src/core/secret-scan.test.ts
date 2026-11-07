@@ -218,7 +218,6 @@ describe('bearer: credential-shaped values only (#625)', () => {
     'Bearer tokens',
     'bearer internationalization',
   ])('does not treat %j as a bearer finding', (line) => {
-    expect(redactTokens(line)).toBe(line);
     const diff = diffOf([{ path: 'src/foo.ts', lines: [`+const note = "${line}";`] }]);
     expect(scanForSecrets(diff).some((f) => f.patternName === 'bearer')).toBe(false);
   });
@@ -227,6 +226,15 @@ describe('bearer: credential-shaped values only (#625)', () => {
     const line = `Authorization: Bearer ${credential}`;
     expect(redactTokens(line)).toBe('Authorization: Bearer [REDACTED]');
     expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+${line}`] }])))
+      .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
+  it('redaction stays broad: short and letters-only values are masked even where the gate ignores them', () => {
+    const short = ['ab', 'c'].join('');
+    expect(redactTokens(`Bearer ${short}`)).toBe('Bearer [REDACTED]');
+    expect(redactTokens(`Authorization=Bearer ${short}`)).toBe('Authorization=Bearer [REDACTED]');
+    expect(redactTokens(`{"authorization": "Bearer ${short}"}`)).toBe('{"authorization": "Bearer [REDACTED]"}');
+    expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+const h = "Authorization=Bearer ${short}";`] }])))
       .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
   });
 
