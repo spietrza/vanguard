@@ -37,7 +37,7 @@ export type DeliveryTarget =
       /** Optional Conventional-Commits scope, e.g. the spec's primary module (`runners`, `hub`). */
       scope?: string;
       /** Built after the commit so it can carry the closing-keyword leaks found in the new commits. */
-      body: (info: { commitLeaks: CommitClosingLeak[] }) => string;
+      body: (info: { commitLeaks: CommitClosingLeak[]; outgoingDiff: string }) => string;
       draft?: boolean;
       cli?: PublishOptions['cli'];
       prToken?: PublishOptions['prToken'];
@@ -139,8 +139,9 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
   // never reach a commit in the first place. Always the worktree's own diff — never a caller's snapshot —
   // rendered as text throughout, so an agent-written .gitattributes cannot hide a file from the scan.
   const secretEnvVars = opts.secretEnvVars ?? [];
+  const outgoingDiff = await ctx.wm.outgoingDiff(ctx.worktreePath);
   const block = scanOutgoingForSecrets(
-    await ctx.wm.outgoingDiff(ctx.worktreePath),
+    outgoingDiff,
     opts.taskId,
     opts.target.kind === 'new-pr' ? 'publish' : 'revise push',
     secretEnvVars,
@@ -174,7 +175,7 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
   if (target.kind === 'new-pr') {
     const pr = await publishForReview(ctx, {
       title: redact(conventionalPrTitle(target.title, target), 'PR title'),
-      body: redact(target.body({ commitLeaks }), 'PR body'),
+      body: redact(target.body({ commitLeaks, outgoingDiff }), 'PR body'),
       ...(target.draft !== undefined ? { draft: target.draft } : {}),
       ...(target.cli !== undefined ? { cli: target.cli } : {}),
       ...(target.prToken !== undefined ? { prToken: target.prToken } : {}),

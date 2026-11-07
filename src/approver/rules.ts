@@ -1,6 +1,12 @@
+import { gateConfigPaths } from '../context/gate-config.js';
 import { createHash } from 'node:crypto';
 import { matchingPathRuleKeys } from './policy.js';
-import type { ApproverFacts, ApproverPolicy, AuditSample, Decision } from './types.js';
+import type { ApproverFacts, ApproverPolicy, AuditSample, Decision, DiffFacts } from './types.js';
+
+/** `diff.gateConfigPaths`, or recomputed path-only (no package.json script heuristic) for facts predating that field. */
+function gateConfigPathsOf(diff: DiffFacts): string[] {
+  return diff.gateConfigPaths ?? gateConfigPaths(diff.paths.map((path) => ({ path })));
+}
 
 /**
  * Whether the review on file speaks for the current head content: same SHA, or an equal patch-id
@@ -56,6 +62,7 @@ export function decide(facts: ApproverFacts, policy: ApproverPolicy, seedInput: 
   if (facts.diff.mergeTreeHeadClean === false) fire('merge-conflict');
   if (facts.diff.headMoved) fire('head-moved');
   if (facts.diff.gitFactsFailed) fire('git-facts-failed');
+  if (gateConfigPathsOf(facts.diff).length > 0) fire('gate-config-changed');
 
   for (const path of facts.diff.paths) {
     for (const key of matchingPathRuleKeys(policy.pathRules, path)) fire(`path:${key}`);

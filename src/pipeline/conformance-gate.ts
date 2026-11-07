@@ -73,7 +73,7 @@ export function extractDiffFiles(diff: string): string[] {
 }
 
 /** Split a unified diff into per-file sections, keyed by the (post-image) path. */
-function diffSections(diff: string): Map<string, string> {
+export function diffSections(diff: string): Map<string, string> {
   const sections = new Map<string, string>();
   const parts = diff.split(/^diff --git /m).slice(1);
   for (const part of parts) {

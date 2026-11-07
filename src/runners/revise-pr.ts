@@ -30,7 +30,8 @@ import { beginRun } from '../core/run-store.js';
 import { appendStepSummary } from '../core/step-summary.js';
 import type { StepSummary, StepSummaryExit } from '../core/step-summary.js';
 import type { StageOutcome } from '../pipeline/pipeline.js';
-import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
+import { GITHUB_GATE_CONFIG_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
+import { diffFilesWithPatches, gateConfigChangedBlock, gateConfigPaths, loadGateConfigExtraGlobs } from '../context/gate-config.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { deliverChange, scanOutgoingForSecrets } from './deliver-change.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
@@ -170,6 +171,28 @@ async function handBackPrLabels(
   } catch (err) {
     log(`revise-pr ${repoSlug}#${number}: labels -> manual label check (${err instanceof Error ? err.message : String(err)})`);
   }
+}
+
+/**
+ * Flag the PR as touching gate config, so a weakening pushed in a revise round reaches the same
+ * human gate the first delivery raises (source-adapter.ts). Unlike the hand-back labels this is NOT
+ * best-effort: the label IS the gate, so a failed flip is reported (it propagates to the caller's
+ * error path) rather than swallowed, which would hand an unflagged PR back for review. Only the
+ * advisory `label create` is logged and tolerated — the label may already exist.
+ */
+async function addGateConfigLabel(
+  gh: GhRunner,
+  repoSlug: string,
+  number: number,
+  log: (line: string) => void,
+): Promise<void> {
+  log(`revise-pr ${repoSlug}#${number}: labels -> ${GITHUB_GATE_CONFIG_LABEL}`);
+  try {
+    await gh(['label', 'create', GITHUB_GATE_CONFIG_LABEL, '--repo', repoSlug, '--force']);
+  } catch (err) {
+    log(`revise-pr ${repoSlug}#${number}: gate-config label ensure -> manual label check (${err instanceof Error ? err.message : String(err)})`);
+  }
+  await editPrLabels(gh, repoSlug, number, { add: [GITHUB_GATE_CONFIG_LABEL] });
 }
 
 /**
@@ -609,7 +632,19 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         verification: { typecheck: verificationStatus, test: verificationStatus },
         whiteLabel,
       });
-      await commentPullRequest(target, [summaryText, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== '').join('\n\n'), gh);
+      // The gate on checker config is per-push, not per-PR (#627): a weakening introduced in a later
+      // revise round must carry the same disclosure and label as one present when the PR was opened,
+      // or the human gate is bypassed by simply pushing it a round later. Both go out before the
+      // hand-back below, so a failure to post leaves the PR in `vanguard:revising` with the round's
+      // error rather than silently handing an unflagged change back for review.
+      const configFiles = diffFilesWithPatches(gateDiff);
+      const configPaths = gateConfigPaths(
+        configFiles,
+        await loadGateConfigExtraGlobs(deps.repoPath, baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`)),
+      );
+      const configBlock = gateConfigChangedBlock(configFiles.filter((file) => configPaths.includes(file.path)));
+      await commentPullRequest(target, [summaryText, configBlock, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== '').join('\n\n'), gh);
+      if (configPaths.length > 0) await addGateConfigLabel(gh, target.repoSlug, target.number, log);
 
       log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
       await markReady(gh, target.repoSlug, target.number, pushToken, log);

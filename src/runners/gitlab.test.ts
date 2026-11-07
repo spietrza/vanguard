@@ -298,6 +298,15 @@ describe('gitlabAdapter', () => {
     expect(body).not.toContain('gate is not enforced');
   });
 
+  it('maps gate-config to its own scoped label', async () => {
+    const { calls, glab } = makeGlab('');
+    await gitlabAdapter(makeDeps(), glab).addFailureLabel('https://gitlab.com/group/project/-/merge_requests/1', 'gate-config');
+    expect(calls).toEqual([
+      ['label', 'create', '--repo', 'group/project', '--name', 'vanguard::gate-config-changed'],
+      ['mr', 'update', '1', '--repo', 'group/project', '--label', 'vanguard::gate-config-changed'],
+    ]);
+  });
+
   it('addFailureLabel maps verify → vanguard::verify-failed and pre-creates the label', async () => {
     const { calls, glab } = makeGlab('');
     const adapter = gitlabAdapter(makeDeps(), glab);

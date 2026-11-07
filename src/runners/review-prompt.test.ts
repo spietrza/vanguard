@@ -276,11 +276,11 @@ describe('neutralizePromptTags', () => {
     const seen = [
       adversarySystemPrompt(),
       buildMergeRequestReviewPrompt(
-        { project: 'g/p', iid: 1, title: '', description: '', webUrl: '', author: '', sourceBranch: '', sha: '', targetBranch: '', diff: '' },
+        { project: 'g/p', iid: 1, title: '', description: '', webUrl: '', author: '', sourceBranch: '', sha: '', targetBranch: '', diff: '', labels: [] },
         { retryTriage: true },
       ),
       buildPullRequestReviewPrompt(
-        { repoSlug: 'o/r', number: 1, title: '', body: '', url: '', author: '', headRefName: '', headRefOid: '', baseRefName: '', isCrossRepository: false, headRepositoryOwner: '', diff: '' },
+        { repoSlug: 'o/r', number: 1, title: '', body: '', url: '', author: '', headRefName: '', headRefOid: '', baseRefName: '', isCrossRepository: false, headRepositoryOwner: '', diff: '', labels: [] },
         { retryTriage: true },
       ),
     ].join('\n');

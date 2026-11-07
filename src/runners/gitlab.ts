@@ -8,7 +8,7 @@ import type { MergeRequestReviewTarget } from './mr-review.js';
 import { renderConformanceSection, hasBlockingFinding } from '../pipeline/review-publish.js';
 import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
-import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL, GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
+import { gitlabFailureLabel, GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { ProviderChoice } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
@@ -107,7 +107,7 @@ export async function addGitlabFailureLabel(
   kind: ProofFailureKind,
   glab?: GlabRunner,
 ): Promise<void> {
-  const label = kind === 'verify' ? GITLAB_VERIFY_FAILED_LABEL : GITLAB_VISUAL_PROOF_FAILED_LABEL;
+  const label = gitlabFailureLabel(kind);
   // Best-effort: a bad URL must never block the run (publishGitlabVerdict uses the same parser).
   let target: MergeRequestReviewTarget;
   try {

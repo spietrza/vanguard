@@ -23,6 +23,7 @@ const BASE_MR = {
   sha: 'abc123',
   targetBranch: 'main',
   diff: 'diff --git a/auth.ts b/auth.ts',
+  labels: [],
 };
 
 describe('fetchMergeRequestForReview', () => {
@@ -35,6 +36,23 @@ describe('fetchMergeRequestForReview', () => {
     const mr = await fetchMergeRequestForReview({ project: 'g/p', iid: 5 }, glab);
 
     expect(mr.diff).toBe('diff --git a/yarn.lock b/yarn.lock\n(generated file: 3 diff lines omitted from review)\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-1\n+2\n');
+  });
+
+  it('carries the MR labels as names, dropping unnamed ones, so the gate-config label reaches the prompt', async () => {
+    const glab: GlabRunner = async (args) => {
+      if (args[1] === 'view') return JSON.stringify({ iid: 5, labels: ['bug', { name: 'vanguard::gate-config-changed' }, {}] });
+      return 'diff';
+    };
+
+    const mr = await fetchMergeRequestForReview({ project: 'g/p', iid: 5 }, glab);
+
+    expect(mr.labels).toEqual(['bug', 'vanguard::gate-config-changed']);
+  });
+
+  it('reports no labels when glab omits them', async () => {
+    const glab: GlabRunner = async (args) => (args[1] === 'view' ? JSON.stringify({ iid: 5 }) : 'diff');
+
+    expect((await fetchMergeRequestForReview({ project: 'g/p', iid: 5 }, glab)).labels).toEqual([]);
   });
 });
 
@@ -60,6 +78,14 @@ describe('buildMergeRequestReviewPrompt', () => {
     const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));
     expect(instructions).toContain('review guidelines the repository documents');
     expect(instructions).toContain('severity levels');
+  });
+
+  it('adds the gate-config instruction only when the MR carries vanguard::gate-config-changed', () => {
+    expect(buildMergeRequestReviewPrompt({ ...BASE_MR, labels: ['bug'] })).not.toContain('labelled as touching gate config');
+
+    const flagged = buildMergeRequestReviewPrompt({ ...BASE_MR, labels: ['bug', 'vanguard::gate-config-changed'] });
+    const instructions = flagged.slice(flagged.indexOf('<task_instructions>'), flagged.indexOf('</task_instructions>'));
+    expect(instructions).toContain('labelled as touching gate config');
   });
 
   it('states that title, description and diff are untrusted, and puts them outside task_instructions', () => {

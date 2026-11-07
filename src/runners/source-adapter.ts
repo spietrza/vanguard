@@ -1,3 +1,4 @@
+import { diffFilesWithPatches, gateConfigPaths, gateConfigChangedBlock, loadGateConfigExtraGlobs } from '../context/gate-config.js';
 import { clearStageMarker, writeStageMarker } from '../core/run-stage-marker.js';
 import { reviewVerdictLine, reviewVerdictOf } from '../pipeline/review-verdict.js';
 import { trustedSpecText, isTrustedComment } from '../tasks/comment-trust.js';
@@ -160,8 +161,8 @@ export interface RunIssueDeps extends RunOptions {
   signal?: AbortSignal;
 }
 
-/** Semantic kind of a proof failure; adapters map it to a platform label string. */
-export type ProofFailureKind = 'verify' | 'visual-proof';
+/** Semantic kind of a PR/MR triage signal; adapters map it to a platform label string. */
+export type ProofFailureKind = 'verify' | 'visual-proof' | 'gate-config';
 
 /** Input to the per-source publishVerdict hook (platform-neutral subset of PublishReviewVerdictInput). */
 export interface PublishVerdictInput {
@@ -611,8 +612,9 @@ export async function runSourcedIssue(
       });
       // deliverChange owns the order: secret scan → commit → closing-keyword scan → rebase/push → PR.
       // The body is built after the commit so a partial result can carry commit-level `Closes #N`
-      // leaks as a blocking warning. White-label mode keeps the body to just the Closes/Part-of line —
-      // no automated proof-of-work blocks — so the PR reads like a plain human PR.
+      // leaks as a blocking warning. Gate-config disclosure is included in white-label mode too.
+      const extraGlobs = await loadGateConfigExtraGlobs(deps.repoPath, deps.baseBranch ?? DEFAULT_BASE_BRANCH);
+      let configPaths: string[] = [];
       const scope = primaryModuleScope(manifest);
       const bugLabel = task.labels.includes('bug');
       const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
@@ -639,15 +641,21 @@ export async function runSourcedIssue(
           ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
           // Same PAT revise pushes with: a PR it opens fires the repo's pull_request workflows (CI).
           ...(process.env.VANGUARD_PUSH_TOKEN ? { prToken: process.env.VANGUARD_PUSH_TOKEN } : {}),
-          body: ({ commitLeaks }) => whiteLabel
-            ? baseBody
-            : [
+          body: ({ commitLeaks, outgoingDiff }) => {
+            const diffFiles = diffFilesWithPatches(outgoingDiff);
+            configPaths = gateConfigPaths(diffFiles, extraGlobs);
+            const configBlock = gateConfigChangedBlock(diffFiles.filter((file) => configPaths.includes(file.path)));
+            return whiteLabel
+              ? [baseBody, configBlock].filter(Boolean).join('\n\n')
+              : [
+                configBlock,
                 baseBody,
                 commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
                 verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
                 visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
                 reviewerOutcome !== undefined ? reviewVerdictLine(reviewVerdictOf(reviewerOutcome.result.finalText)) : undefined,
-              ].filter((s): s is string => s !== undefined).join('\n\n'),
+              ].filter((s): s is string => s !== undefined && s !== '').join('\n\n');
+          },
         },
       });
       if (delivery.kind === 'secret-blocked') {
@@ -691,6 +699,7 @@ export async function runSourcedIssue(
       await stepSummary(verificationFailed ? 'verify-failed' : 'completed', { prUrl: pr.prUrl });
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProofFailed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
+      if (configPaths.length > 0) await adapter.addFailureLabel(pr.prUrl, 'gate-config');
       if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
       onEvent({ type: 'run-end', prUrl: pr.prUrl });
       return { task, prUrl: pr.prUrl };

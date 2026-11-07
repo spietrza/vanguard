@@ -54,6 +54,7 @@ function prForReview(overrides: Partial<PullRequestForReview> = {}): PullRequest
     isCrossRepository: false,
     headRepositoryOwner: 'o',
     diff: 'diff --git a/auth.ts b/auth.ts',
+    labels: [],
     ...overrides,
   };
 }
@@ -92,7 +93,7 @@ describe('fetchPullRequestForReview', () => {
       '--repo',
       'o/r',
       '--json',
-      'number,title,body,url,author,headRefName,headRefOid,baseRefName,isCrossRepository,headRepositoryOwner',
+      'number,title,body,url,author,headRefName,headRefOid,baseRefName,isCrossRepository,headRepositoryOwner,labels',
     ]);
     expect(calls[1]).toEqual(['pr', 'diff', '12', '--repo', 'o/r']);
   });
@@ -384,6 +385,16 @@ describe('review prompt and comment formatting', () => {
     const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));
     expect(instructions).toContain('review guidelines the repository documents');
     expect(instructions).toContain('severity levels');
+  });
+
+  it('adds the gate-config instruction only when the PR carries vanguard:gate-config-changed', () => {
+    const plain = buildPullRequestReviewPrompt(prForReview({ labels: ['bug'] }));
+    expect(plain).not.toContain('labelled as touching gate config');
+
+    const flagged = buildPullRequestReviewPrompt(prForReview({ labels: ['bug', 'vanguard:gate-config-changed'] }));
+    expect(flagged).toContain('labelled as touching gate config');
+    const instructions = flagged.slice(flagged.indexOf('<task_instructions>'), flagged.indexOf('</task_instructions>'));
+    expect(instructions).toContain('labelled as touching gate config');
   });
 
   it('does not add retry triage instructions by default', () => {

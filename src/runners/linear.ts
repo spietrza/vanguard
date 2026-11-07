@@ -7,7 +7,7 @@ import { agentAuthFromEnv } from '../agents/auth.js';
 import { runSourcedIssue } from './source-adapter.js';
 import { knownGitlabProjectFromOrigin, publishGitlabVerdict, addGitlabFailureLabel } from './gitlab.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
-import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
+import { githubFailureLabel } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
@@ -71,8 +71,7 @@ export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, 
       : (input: PublishVerdictInput) => publishGitlabVerdict(gitlabProject, input, glab),
     async addFailureLabel(prUrl: string, kind: ProofFailureKind) {
       if (gitlabProject !== undefined) return addGitlabFailureLabel(gitlabProject, prUrl, kind, glab);
-      const label = kind === 'verify' ? GITHUB_VERIFY_FAILED_LABEL : GITHUB_VISUAL_PROOF_FAILED_LABEL;
-      await addPrFailureLabel(deps.repoPath, prUrl, label);
+      await addPrFailureLabel(deps.repoPath, prUrl, githubFailureLabel(kind));
     },
     async linkPr(_issueRef: string, task: Task, prUrl: string) {
       await linkLinearIssue(task.id, prUrl);
