@@ -4,6 +4,7 @@ import { defaultGhRunner } from '../tasks/github.js';
 import { AUTHORITATIVE_BLOCK_INSTRUCTION, neutralizePromptTags } from './review-prompt.js';
 import type { PullRequestReviewTarget } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 export interface FeedbackItem {
   source: 'thread' | 'review' | 'comment';
@@ -298,7 +299,7 @@ export async function replyAndResolveThread(
   body: string,
   gh: GhRunner = defaultGhRunner,
 ): Promise<void> {
-  await gh(['api', 'graphql', '-f', `query=${REPLY_MUTATION}`, '-F', `threadId=${threadId}`, '-f', `body=${body}`]);
+  await gh(['api', 'graphql', '-f', `query=${REPLY_MUTATION}`, '-F', `threadId=${threadId}`, '-f', `body=${redactForPublish(body)}`]);
   await gh(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-F', `threadId=${threadId}`]);
 }
 

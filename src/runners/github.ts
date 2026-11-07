@@ -69,6 +69,20 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
 }
 
 /**
+ * Board tasks whose `owner/repo#N` id belongs to `repoSlug` (case-insensitive). runGithubIssue is
+ * pinned to the configured repo, so an item from another repo would run the local issue with the
+ * same number; those are skipped with a warning, as the board watch does.
+ */
+export function sameRepoTasks(tasks: Task[], repoSlug: string): Task[] {
+  return tasks.filter((task) => {
+    const itemRepo = task.id.slice(0, task.id.lastIndexOf('#'));
+    if (itemRepo.toLowerCase() === repoSlug.toLowerCase()) return true;
+    console.warn(`vanguard: project item ${task.id} belongs to another repository than ${repoSlug}; skipped`);
+    return false;
+  });
+}
+
+/**
  * Run every issue on a GitHub Projects v2 board (optionally filtered by label) as its own run + PR,
  * concurrently and with failure isolation. The owner defaults to the repo slug's owner.
  */
@@ -78,7 +92,7 @@ export async function runGithubProject(
 ): Promise<{ tasks: Task[]; outcomes: FanOutOutcome<Task, RunGithubIssueResult>[] }> {
   const owner = opts.owner ?? (deps.repoSlug.split('/')[0] as string);
   const fetcher = new GitHubProjectFetcher({ owner, projectNumber: opts.projectNumber, repo: deps.repoSlug });
-  const tasks = await fetcher.list(opts.label !== undefined ? { labels: [opts.label] } : undefined);
+  const tasks = sameRepoTasks(await fetcher.list(opts.label !== undefined ? { labels: [opts.label] } : undefined), deps.repoSlug);
   const outcomes = await fanOut(tasks, (task) => runGithubIssue(task.id, deps), {
     ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
   });

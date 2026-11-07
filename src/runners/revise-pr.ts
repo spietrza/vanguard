@@ -327,7 +327,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     const taskId = `revise-pr-${target.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${target.number}`;
     // One RunWriter for the whole revision round, shared by the two (mutually exclusive) writeStages
     // calls below, for consistency with runSourcedIssue's writer.
-    const writer = beginRun(deps.repoPath, taskId);
+    const writer = beginRun(deps.repoPath, taskId, undefined, { secretEnvVars: providerKeyEnvNames(deps) });
     const revisionStageMeta = { flow: 'revise', provider: agents.agent.name };
     let outcomes: StageOutcome[] = [];
     // One block per revision in the Actions job's Summary tab (no GITHUB_STEP_SUMMARY ⇒ no-op).
@@ -440,8 +440,11 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty. A git failure here must
       // not lose the cost trace the persist below exists for: record the outcomes and rethrow.
       let revisionDiff: string;
+      // The gate scans the attribute-proof rendering; revisionDiff stays the stored/previewed diff.
+      let gateDiff: string;
       try {
         revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+        gateDiff = await ctx.wm.outgoingDiff(ctx.worktreePath);
       } catch (err) {
         // Nothing is known about the content on this path (the scan never ran): keep the payloads off disk.
         await writer.writeStages(outcomes, { ...revisionStageMeta, omitDiff: true });
@@ -453,12 +456,10 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // a commit, the PR branch, or the --out preview a human will read and share. A scan error blocks
       // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
       // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gaps,
-      // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath), and
-      // neither layer can see inside a binary file — `git diff` renders it as `Binary files … differ`,
-      // so a credential written into a binary's bytes is not detected (only its path is checked).
+      // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
       // A custom provider's key env var is repo-configured: the secret gate cannot know its name.
       const secretEnvVars = providerKeyEnvNames(deps);
-      const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`, 'revise push', secretEnvVars);
+      const block = scanOutgoingForSecrets(gateDiff, `${target.repoSlug}#${target.number}`, 'revise push', secretEnvVars);
       // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
       // the outcomes are persisted — the first delivery does this in runSourcedIssue. Persisted after
       // the scan so a blocked round leaves no `.diff` / `.bundle` on disk (the diff holds the secret).

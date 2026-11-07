@@ -149,8 +149,8 @@ fn fetch_spec(state: tauri::State<'_, sidecar::Sidecar>, repo_path: String, task
 }
 
 #[tauri::command]
-async fn spawn_run(app: tauri::AppHandle, cwd: String, command: String) -> Result<u32, String> {
-    spawn::spawn(app, cwd, command).map_err(|e| e.to_string())
+async fn spawn_run(app: tauri::AppHandle, cwd: String, argv: Vec<String>) -> Result<u32, String> {
+    spawn::spawn(app, cwd, argv).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

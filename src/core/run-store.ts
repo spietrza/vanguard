@@ -2,7 +2,8 @@
 // Both readers that used to re-derive this format now forward here — src/hub/runs.ts (thin
 // re-export shim) and the Tauri desktop app (apps/desktop/src-tauri/src/runs.rs), which forwards
 // `list_runs`/`read_run` over the sidecar query pipe the way `list_tasks` already does.
-import { mkdir, writeFile, appendFile, unlink, readdir, readFile, lstat, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { writeFile, appendFile, unlink, readdir, readFile, lstat, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
 import { hostGitArgs } from '../worktree/host-git.js';
@@ -10,7 +11,8 @@ import { BadRequestError } from '../sidecar/sidecar.js';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import { exportRunTrace } from './otlp-sink.js';
-import { redactTokens, scanForSecrets } from './secret-scan.js';
+import { assertStatePath, ensureStateDir } from './state-path.js';
+import { injectedSecretValues, redactForPublish, scanForInjectedSecrets, scanForSecrets } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
 import type { DecisionProbeResult } from './decision-probe.js';
@@ -328,7 +330,15 @@ export interface RunWriter {
   writeVisualProof(result: VisualProofResult): Promise<string>;
 }
 
+/** Options of {@link beginRun}. */
+export interface BeginRunOptions {
+  /** Env var names of credentials the static injected-secret list cannot know (a custom provider's `keyEnv`). */
+  secretEnvVars?: readonly string[];
+}
+
 interface WriteRecordOptions {
+  /** Exact values of the credentials injected into this run's sandbox, removed from every free-text field. */
+  secretValues: readonly string[];
   label?: string;
   prUrl?: string;
   requestedModel?: string;
@@ -338,13 +348,14 @@ interface WriteRecordOptions {
 /**
  * Persist a run's metadata to `.vanguard/runs/<taskId>/<ts>[-label].json` and append one compact
  * metric line to `.vanguard/runs/metrics.jsonl`, so an AFK fleet leaves a cost/usage/exit trace. Free
- * text in the record (`finalText`, the sibling `.transcript.log`) is token-masked; the (potentially
+ * text in the record (`finalText`, the sibling `.transcript.log`) is masked by redactForPublish; the (potentially
  * large) diff goes to a sibling `.diff` file plus a `.bundle` of the worktree HEAD, both skipped under
- * `omitDiff`. Returns the written JSON path.
+ * `omitDiff`. Every path is checked with assertStatePath first: a repo-committed symlink under
+ * `.vanguard` must not redirect these writes out of the checkout. Returns the written JSON path.
  */
-async function writeRecord(root: string, taskId: string, timestamp: string, result: RunResult, opts: WriteRecordOptions = {}): Promise<string> {
-  const taskDir = join(root, taskId);
-  await mkdir(taskDir, { recursive: true });
+async function writeRecord(repoPath: string, taskId: string, timestamp: string, result: RunResult, opts: WriteRecordOptions): Promise<string> {
+  const root = runsRoot(repoPath);
+  const taskDir = await ensureStateDir(repoPath, join(root, taskId));
 
   const { diff, transcript, ...meta } = result;
   // Why the diff (and bundle) are withheld, recorded on run.json so the hub and a human can tell
@@ -352,19 +363,20 @@ async function writeRecord(root: string, taskId: string, timestamp: string, resu
   //  - 'secret-blocked': the caller's publish gate fired (opts.omitDiff).
   //  - 'secret-scan': a stage's diff is the worktree at the end of THAT stage, while the gate scans the
   //    final diff only — a secret the implementer wrote and the simplifier removed passes the gate yet
-  //    sits in the implementer's record, so every stage diff meets the same scan first. Same residual
-  //    gap as the gate: scanForSecrets exempts test paths (isTestPath).
+  //    sits in the implementer's record, so every stage diff meets the same scans first: the patterns
+  //    (which exempt test paths, isTestPath) and the exact-value check on injected credentials.
   const diffOmitted: 'secret-blocked' | 'secret-scan' | undefined = opts.omitDiff
     ? 'secret-blocked'
-    : diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0
+    : diff !== undefined && diff !== '' && (scanForSecrets(diff).length > 0 || scanForInjectedSecrets(diff, opts.secretValues).length > 0)
       ? 'secret-scan'
       : undefined;
-  // Free text is masked before it reaches disk (the record may leave the job as a CI artifact). When
-  // the diff is withheld, so is the text: the closing message tends to quote the change and
-  // redactTokens is pattern-only (a fragment past a token's char class survives).
+  // Free text is masked before it reaches disk (the record may leave the job as a CI artifact): injected
+  // credentials by exact value, then token shapes. When the diff is withheld, so is the text: the
+  // closing message tends to quote the change and the pattern pass is lossy (a fragment past a token's
+  // char class survives).
   const record = {
     ...meta,
-    finalText: diffOmitted !== undefined ? `[withheld: ${diffOmitted}]` : redactTokens(result.finalText),
+    finalText: diffOmitted !== undefined ? `[withheld: ${diffOmitted}]` : redactForPublish(result.finalText, opts.secretValues),
     timestamp,
     ...(opts.label !== undefined ? { stage: opts.label } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
@@ -373,20 +385,29 @@ async function writeRecord(root: string, taskId: string, timestamp: string, resu
   const suffix = opts.label !== undefined ? `-${opts.label}` : '';
   const base = join(taskDir, `${sanitizeTimestamp(timestamp)}${suffix}`);
   const file = `${base}.json`;
+  await assertStatePath(repoPath, file);
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
   if (diffOmitted === 'secret-scan') {
     // Visible in the job log too, so a scan false positive on a green run does not vanish silently.
     console.error(`vanguard: run record ${taskId}${suffix}: diff, bundle and transcript withheld (secret-scan)`);
   }
   if (diffOmitted === undefined) {
-    // The transcript is raw agent output: tool results can echo env or config, so mask known token
-    // shapes (lossy is fine for a log). When the diff is withheld the transcript is skipped entirely:
+    // The transcript is raw agent output: tool results can echo env or config (a `cat` of the Codex
+    // auth.json lands JSON-escaped, out of the patterns' reach), so mask injected values and known
+    // token shapes (lossy is fine for a log). When the diff is withheld the transcript is skipped entirely:
     // the tool call that wrote the secret is in there verbatim, and skipping beats pattern-only masking.
-    if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
+    if (transcript) {
+      await assertStatePath(repoPath, `${base}.transcript.log`);
+      await writeFile(`${base}.transcript.log`, redactForPublish(transcript, opts.secretValues));
+    }
     // Written faithful, not masked: this is what the hub's diff viewer and a human reconstructing the
     // run read, and redactTokens would mangle ordinary code (`password: process.env.X` → `[REDACTED]`).
-    if (diff) await writeFile(`${base}.diff`, diff);
+    if (diff) {
+      await assertStatePath(repoPath, `${base}.diff`);
+      await writeFile(`${base}.diff`, diff);
+    }
     const bundlePath = `${base}.bundle`;
+    await assertStatePath(repoPath, bundlePath);
     try {
       await execa('git', hostGitArgs(['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']));
     } catch {
@@ -401,22 +422,37 @@ async function writeRecord(root: string, taskId: string, timestamp: string, resu
     ...stageMetric(result, opts.label, opts.requestedModel !== undefined ? { requestedModel: opts.requestedModel } : undefined),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
   };
-  await appendFile(join(root, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
+  await appendMetric(repoPath, metric);
   return file;
+}
+
+/** Append one line to `.vanguard/runs/metrics.jsonl`, refusing a symlinked leaf or parent. */
+async function appendMetric(repoPath: string, metric: object): Promise<void> {
+  const path = join(runsRoot(repoPath), 'metrics.jsonl');
+  await assertStatePath(repoPath, path);
+  await appendFile(path, `${JSON.stringify(metric)}\n`);
 }
 
 /**
  * Begin one run: a `RunWriter` handle that owns `taskId`'s timestamp, so proof.json, visual-proof.json
  * and every stage record share one prefix and the hub/desktop readers can match a run's proof to its
- * stage records by name. `timestamp` is only for deterministic tests — production callers never pass it.
+ * stage records by name. `timestamp` is only for deterministic tests — production callers pass
+ * `undefined`. The injected credential values are snapshotted once here, for every record of the run.
  */
-export function beginRun(repoPath: string, taskId: string, timestamp: string = new Date().toISOString()): RunWriter {
+export function beginRun(
+  repoPath: string,
+  taskId: string,
+  timestamp: string = new Date().toISOString(),
+  runOpts: BeginRunOptions = {},
+): RunWriter {
   const root = runsRoot(repoPath);
+  const secretValues = injectedSecretValues(process.env, runOpts.secretEnvVars ?? []);
 
   return {
     async writeStages(outcomes, opts = {}): Promise<void> {
       for (const outcome of outcomes) {
-        await writeRecord(root, taskId, timestamp, outcome.result, {
+        await writeRecord(repoPath, taskId, timestamp, outcome.result, {
+          secretValues,
           label: outcome.name,
           ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
           ...(outcome.model !== undefined ? { requestedModel: outcome.model } : {}),
@@ -435,26 +471,32 @@ export function beginRun(repoPath: string, taskId: string, timestamp: string = n
     },
 
     async writeProof(result: VerificationResult): Promise<string> {
-      const taskDir = join(root, taskId);
-      await mkdir(taskDir, { recursive: true });
+      const taskDir = await ensureStateDir(repoPath, join(root, taskId));
       const base = join(taskDir, sanitizeTimestamp(timestamp));
       const file = `${base}.proof.json`;
+      await assertStatePath(repoPath, file);
       // outputTail is verbatim command output (last ~40 lines): masked like every other free text in the record.
-      await writeFile(file, `${JSON.stringify({ ...result, outputTail: redactTokens(result.outputTail) }, null, 2)}\n`);
+      await writeFile(file, `${JSON.stringify({ ...result, outputTail: redactForPublish(result.outputTail, secretValues) }, null, 2)}\n`);
 
       const metric = { evt: 'verify', ts: timestamp, taskId, passed: result.passed, exitCode: result.exitCode, sha256: result.sha256 };
-      await appendFile(join(root, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
+      await appendMetric(repoPath, metric);
       return file;
     },
 
     async writeVisualProof(result: VisualProofResult): Promise<string> {
-      const taskDir = join(root, taskId);
-      await mkdir(taskDir, { recursive: true });
+      const taskDir = await ensureStateDir(repoPath, join(root, taskId));
       const base = join(taskDir, sanitizeTimestamp(timestamp));
       const file = `${base}.visual-proof.json`;
-      // Masked like proof.json on the normal path (sha256 is over the full output there). On the failure
-      // path visual-proof.ts hashes `outputTail` itself, so a masked copy would make the proof unverifiable.
-      const stored = result.passed ? { ...result, outputTail: redactTokens(result.outputTail) } : result;
+      await assertStatePath(repoPath, file);
+      // Masked like proof.json (sha256 is over the full output there). On the did-not-run path
+      // (exitCode -1) visual-proof.ts hashes `outputTail` itself, so the hash is recomputed over the
+      // masked text to keep the stored proof verifiable.
+      const outputTail = redactForPublish(result.outputTail, secretValues);
+      const stored = {
+        ...result,
+        outputTail,
+        ...(result.exitCode === -1 && outputTail !== result.outputTail ? { sha256: createHash('sha256').update(outputTail).digest('hex') } : {}),
+      };
       await writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
 
       const metric = {
@@ -463,10 +505,10 @@ export function beginRun(repoPath: string, taskId: string, timestamp: string = n
         taskId,
         passed: result.passed,
         exitCode: result.exitCode,
-        sha256: result.sha256,
+        sha256: stored.sha256,
         artifacts: result.artifacts.length,
       };
-      await appendFile(join(root, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
+      await appendMetric(repoPath, metric);
       return file;
     },
   };
@@ -495,7 +537,8 @@ export interface PersistOptions {
  * so its proof files share the stage records' prefix. Kept for one release of compatibility.
  */
 export async function persistRunRecord(localRepoPath: string, result: RunResult, opts: PersistOptions = {}): Promise<string> {
-  return writeRecord(runsRoot(localRepoPath), result.taskId, opts.timestamp ?? new Date().toISOString(), result, {
+  return writeRecord(localRepoPath, result.taskId, opts.timestamp ?? new Date().toISOString(), result, {
+    secretValues: injectedSecretValues(),
     ...(opts.label !== undefined ? { label: opts.label } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
     ...(opts.requestedModel !== undefined ? { requestedModel: opts.requestedModel } : {}),
@@ -529,8 +572,7 @@ export async function persistDecisionProbe(
   probe: DecisionProbeResult,
   opts: { timestamp?: string } = {},
 ): Promise<void> {
-  const root = runsRoot(localRepoPath);
-  await mkdir(root, { recursive: true });
+  await ensureStateDir(localRepoPath, runsRoot(localRepoPath));
   const metric = { evt: 'decision_probe', ts: opts.timestamp ?? new Date().toISOString(), taskId, ...probe };
-  await appendFile(join(root, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
+  await appendMetric(localRepoPath, metric);
 }

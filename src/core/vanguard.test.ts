@@ -406,6 +406,38 @@ describe('vanguard.run', () => {
     } as unknown as IsolatedSandboxProvider;
   }
 
+  it('drops a forged session id: no session copy ever leaves the sessions dir, no restore runs', async () => {
+    const wm = new WorktreeManager(repo);
+    const hostPaths: string[] = [];
+    const sandbox = {
+      ...(sessionTrackingSandbox(() => undefined) as unknown as Record<string, unknown>),
+      copyIn: async (hostPath: string): Promise<void> => {
+        if (hostPath.endsWith('.jsonl')) hostPaths.push(hostPath); // a session restore, not the worktree copy-in
+      },
+      copyFileOut: async (sandboxPath: string, hostPath: string): Promise<void> => {
+        if (sandboxPath === '/workspace') {
+          await mkdir(hostPath, { recursive: true });
+          return;
+        }
+        hostPaths.push(hostPath);
+      },
+      exists: async (): Promise<boolean> => false,
+    } as unknown as IsolatedSandboxProvider;
+    const agent: AgentProvider = {
+      name: 'claude-code',
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        yield { text: 'working', sessionId: '../x' };
+        return { finalText: 'done', turns: 1, sessionId: '../../runs/metrics' };
+      },
+    };
+    const ctx = await prepareContext({ taskId: 'forged-sid', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent, resumeSessionId: '../../../../tmp/other' });
+    await disposeContext(ctx);
+
+    expect(result.sessionId).toBeUndefined();
+    expect(hostPaths).toEqual([]);
+  });
+
   it('does not attempt session capture for a non-Claude provider (codex reports a sessionId but writes no jsonl)', async () => {
     const wm = new WorktreeManager(repo);
     let captureAttempted = false;
