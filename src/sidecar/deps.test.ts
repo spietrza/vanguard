@@ -1,7 +1,10 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beginRun as beginStoredRun, runsRoot, sanitizeTimestamp } from '../core/run-store.js';
+import { invokeCoreMethod } from './sidecar.js';
+import type { RunResult } from '../core/types.js';
 import type { RunEvent } from '../pipeline/events.js';
 
 // The S6 fail-fast contract: provider resolution is a FIRST statement of the createRun dep —
@@ -338,4 +341,66 @@ describe('createRun: the real credential never reaches Docker secrets (source-ad
       expect(JSON.stringify(capturedSecrets)).not.toContain(secret);
     });
   }
+});
+
+describe('production run-store forwards', () => {
+  const timestamp = '2026-06-06T10:00:00.000Z';
+  const result: RunResult = {
+    taskId: 't', completed: true, exitReason: 'completed', turns: 1,
+    worktreePath: '/wt', worktreePreserved: false, finalText: 'done', diff: '', costUsd: 0.1,
+  };
+  const proof = { command: 'test', exitCode: 0, passed: true, sha256: 'abc', outputTail: 'ok' };
+  const repos: string[] = [];
+  async function repo(): Promise<string> {
+    const path = await plainRepo();
+    repos.push(path);
+    return path;
+  }
+  afterEach(async () => {
+    await Promise.all(repos.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  it('groups stages once, sorts newest first, and omits absent optional fields', async () => {
+    const repoPath = await repo();
+    await beginStoredRun(repoPath, 't', timestamp).writeStages([
+      { name: 'implement', result }, { name: 'review', result: { ...result, completed: false } },
+    ]);
+    const newer = '2026-06-06T11:00:00.000Z';
+    await beginStoredRun(repoPath, 't', newer).writeStages([{ name: 'implement', result }]);
+    const runs = await productionDeps().listRuns({ repoPath });
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => run.timestamp)).toEqual([newer, timestamp]);
+    expect(runs[1]).toMatchObject({ taskId: 't', stages: ['implement', 'review'], totalCostUsd: 0.2, anyFailed: true });
+    expect(runs[0]!.anyFailed).toBe(false);
+    expect(runs[1]).not.toHaveProperty('prUrl');
+  });
+
+  it.each([
+    ['2026-06-06T09:59:57.000Z', true],
+    ['2026-06-06T10:00:03.000Z', false],
+    ['2026-06-06T09:49:59.000Z', false],
+  ] as const)('proof fallback for %s is %s through core dispatch', async (proofTs, found) => {
+    const repoPath = await repo();
+    await beginStoredRun(repoPath, 't', timestamp).writeStages([{ name: 'implement', result }]);
+    await beginStoredRun(repoPath, 't', proofTs).writeProof(proof);
+    const detail = await invokeCoreMethod(productionDeps(), 'readRun', { repoPath, taskId: 't', timestamp });
+    expect(detail).toMatchObject({ taskId: 't', timestamp });
+    expect((detail as { proof?: unknown }).proof !== undefined).toBe(found);
+    expect((await productionDeps().readRun({ repoPath, taskId: 't', timestamp })).proof !== undefined).toBe(found);
+  });
+
+  it('skips an unreadable record and keeps the good run through core dispatch', async () => {
+    const repoPath = await repo();
+    await beginStoredRun(repoPath, 't', timestamp).writeStages([{ name: 'review', result }]);
+    await mkdir(join(runsRoot(repoPath), 't', sanitizeTimestamp(timestamp) + '-implement.json'));
+    const runs = await invokeCoreMethod(productionDeps(), 'listRuns', { repoPath });
+    expect(runs).toMatchObject([{ taskId: 't', timestamp, stages: ['review'] }]);
+    expect(await productionDeps().listRuns({ repoPath })).toHaveLength(1);
+  });
+
+  it('retains task-id defence and reports the missing task path', async () => {
+    const repoPath = await repo();
+    await expect(productionDeps().readRun({ repoPath, taskId: '../escape', timestamp })).rejects.toBeInstanceOf(BadRequestError);
+    await expect(productionDeps().readRun({ repoPath, taskId: 'missing', timestamp })).rejects.toThrow(join(runsRoot(repoPath), 'missing'));
+  });
 });

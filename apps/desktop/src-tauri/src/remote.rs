@@ -5,7 +5,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::runs::{self, RunSummary};
+use crate::runs;
+use crate::sidecar::Sidecar;
 
 /// Artifact name the factory workflows upload `.vanguard/runs/` under (`upload-run-records`).
 const ARTIFACT: &str = "vanguard-runs";
@@ -33,7 +34,7 @@ pub struct RemoteRun {
 pub struct RemoteImport {
     pub run_id: u64,
     pub task_ids: Vec<String>,
-    pub runs: Vec<RunSummary>,
+    pub runs: Vec<serde_json::Value>,
     pub cached_at: String,
 }
 
@@ -100,7 +101,7 @@ fn repo_slug(repo_path: &Path) -> String {
 }
 
 /// `<cache_root>/remote-runs/<slug>/<run_id>` — a fake repo root whose `.vanguard/runs` is the
-/// downloaded artifact, so runs.rs reads it unchanged.
+/// downloaded artifact, so core derives the same runs root.
 fn cache_repo_dir(cache_root: &Path, slug: &str, run_id: u64) -> PathBuf {
     cache_root.join("remote-runs").join(slug).join(run_id.to_string())
 }
@@ -168,18 +169,28 @@ fn fetch_artifact(repo_path: &Path, run_id: u64, dest: &Path) -> Result<(), Stri
 /// Pull a CI run's `vanguard-runs` artifact into the cache (once; cached runs skip `gh`) and group
 /// it into the same run summaries the local Runs table uses. Best-effort like `list_remote_runs`:
 /// `gh` missing / unauthenticated / no such artifact come back as the tool's own message.
-pub fn import_remote_run(cache_root: &Path, repo_path: &Path, run_id: u64) -> Result<RemoteImport, String> {
+pub fn import_remote_run(state: &Sidecar, cache_root: &Path, repo_path: &Path, run_id: u64) -> Result<RemoteImport, String> {
     let cache_repo = cache_repo_dir(cache_root, &repo_slug(repo_path), run_id);
-    if !is_cached(&cache_repo) {
-        if let Err(e) = fetch_artifact(repo_path, run_id, &runs::runs_dir(&cache_repo)) {
-            let _ = fs::remove_dir_all(&cache_repo); // no half-written cache → no false "cached" marker
+    ensure_artifact(repo_path, run_id, &cache_repo)?;
+    let runs = runs::list_runs(state, &cache_repo)?;
+    let task_ids = task_ids_from(&runs);
+    Ok(RemoteImport { run_id, task_ids, runs, cached_at: now_iso() })
+}
+
+fn ensure_artifact(repo_path: &Path, run_id: u64, cache_repo: &Path) -> Result<(), String> {
+    if !is_cached(cache_repo) {
+        if let Err(e) = fetch_artifact(repo_path, run_id, &runs::runs_dir(cache_repo)) {
+            let _ = fs::remove_dir_all(cache_repo); // no half-written cache → no false "cached" marker
             return Err(e);
         }
     }
-    let runs = runs::list_run_summaries(&cache_repo).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn task_ids_from(summaries: &[serde_json::Value]) -> Vec<String> {
     let mut seen = HashSet::new();
-    let task_ids: Vec<String> = runs.iter().filter(|r| seen.insert(r.task_id.clone())).map(|r| r.task_id.clone()).collect();
-    Ok(RemoteImport { run_id, task_ids, runs, cached_at: now_iso() })
+    summaries.iter().filter_map(|s| s["taskId"].as_str())
+        .filter(|id| seen.insert(*id)).map(String::from).collect()
 }
 
 #[cfg(test)]
@@ -256,11 +267,7 @@ mod tests {
         fs::create_dir_all(&repo).unwrap();
         let cache_repo = cache_repo_dir(cache.path(), "proj-a", 7);
         write_record(&cache_repo);
-        let out = import_remote_run(cache.path(), &repo, 7).unwrap();
-        assert_eq!(out.run_id, 7);
-        assert_eq!(out.task_ids, vec!["task-9".to_string()]);
-        assert_eq!(out.runs.len(), 1);
-        assert_eq!(out.runs[0].task_id, "task-9");
+        ensure_artifact(&repo, 7, &cache_repo).unwrap();
     }
 
     #[test]
@@ -268,5 +275,22 @@ mod tests {
         assert_eq!(resolve_root(Path::new("/cfg"), Path::new("/repo"), &RunSource::Local), Path::new("/repo"));
         let ci = resolve_root(Path::new("/cfg"), Path::new("/repo"), &RunSource::Ci { run_id: 42 });
         assert_eq!(ci, cache_repo_dir(Path::new("/cfg"), &repo_slug(Path::new("/repo")), 42));
+    }
+
+    #[test]
+    fn unique_task_ids_keep_first_seen_order() {
+        let summaries = [serde_json::json!({"taskId":"b"}), serde_json::json!({}), serde_json::json!({"taskId":"a"}), serde_json::json!({"taskId":"b"})];
+        assert_eq!(task_ids_from(&summaries), vec!["b", "a"]);
+    }
+
+    #[test]
+    fn ci_forward_targets_cache_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("proj");
+        fs::create_dir_all(&repo).unwrap();
+        let root = resolve_root(tmp.path(), &repo, &RunSource::Ci { run_id: 42 });
+        let params = runs::read_run_params(&root, "task", "ts");
+        assert_eq!(params["repoPath"], tmp.path().join("remote-runs/proj/42").to_string_lossy().as_ref());
+        assert_eq!(runs::runs_dir(&root), root.join(".vanguard/runs"));
     }
 }

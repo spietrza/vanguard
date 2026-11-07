@@ -5,14 +5,14 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { writeFile, appendFile, unlink, readdir, lstat, open, stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { execa } from 'execa';
 import { hostGitArgs } from '../worktree/host-git.js';
 import { BadRequestError } from '../sidecar/sidecar.js';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import { exportRunTrace } from './otlp-sink.js';
-import { assertStatePath, ensureStateDir } from './state-path.js';
+import { assertStatePath, ensureStateDir, isSafeTaskId } from './state-path.js';
 import { injectedSecretValues, redactForPublish, scanForInjectedSecrets, scanForSecrets } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
@@ -38,11 +38,6 @@ export function runsRoot(repoPath: string, origin?: number): string {
 /** Filesystem-safe form of an ISO timestamp, shared by every record filename. */
 export function sanitizeTimestamp(ts: string): string {
   return ts.replace(/[^0-9A-Za-z]/g, '-');
-}
-
-/** Guard against path traversal: a task id must name a single direct child of the runs root. */
-function isSafeTaskId(taskId: string): boolean {
-  return taskId !== '' && !taskId.includes('/') && !taskId.includes('\\') && !taskId.includes('..') && !isAbsolute(taskId);
 }
 
 export function isRunRecordFile(name: string): boolean {

@@ -2,6 +2,7 @@ import { capabilities } from '../api/capabilities.js';
 import { assertFlowResolvable, deleteRepoFlow, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
 import { fetchTaskSpec, listBoardTasks } from '../tasks/board-list.js';
 import { listRepoFiles, readRepoFile } from '../tasks/repo-files.js';
+import { listRuns as listRunSummaries, readRun as readRunDetail, runsRoot } from '../core/run-store.js';
 import { VanguardError } from '../core/errors.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import {
@@ -182,6 +183,10 @@ export function productionDeps(): SidecarDeps {
         throw error;
       }
     },
+    // Run-record read path (#472): one reader. The desktop's `list_runs`/`read_run` forward here, so
+    // the proof fallback and the skip-not-abort listing are shared instead of re-derived in Rust.
+    listRuns: ({ repoPath }) => listRunSummaries(runsRoot(repoPath)),
+    readRun: ({ repoPath, taskId, timestamp }) => readRunDetail(runsRoot(repoPath), taskId, timestamp),
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
       // FIRST statements, before beginRun() and the sandbox: an unresolvable flow (typo, broken or
       // duplicate .hcl) or provider (unknown name, broken customs entry, http custom on this

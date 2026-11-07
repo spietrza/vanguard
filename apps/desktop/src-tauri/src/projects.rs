@@ -1,47 +1,12 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 
-use crate::runs::RunSummary;
-
-/// Parsed run summaries per repo, reused across dashboard polls while the runs tree is unchanged.
-/// `list_run_summaries` reads + JSON-parses every run record; without this the whole history is
-/// re-parsed for every project on each poll (`App.tsx` ticks `listProjects()` every 5s). Keyed by
-/// repo path; the tree fingerprint invalidates it when a record is added, removed, or rewritten.
-/// ponytail: `list_active` still stat-scans session dirs each tick, but that's stat-only (no reads)
-/// and its result is time-sensitive anyway; only the heavy parse is worth caching.
-/// Per-repo cache entry: (runs-tree fingerprint, parsed summaries at that fingerprint).
-type SummaryCache = HashMap<String, (u64, Vec<RunSummary>)>;
-
-fn summaries_cache() -> &'static Mutex<SummaryCache> {
-    static CACHE: OnceLock<Mutex<SummaryCache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn cached_summaries(repo_path: &Path) -> Vec<RunSummary> {
-    let key = repo_path.to_string_lossy().into_owned();
-    let fp = crate::runs::runs_fingerprint(repo_path);
-    if let Some((cached_fp, summaries)) = summaries_cache().lock().unwrap().get(&key) {
-        if *cached_fp == fp {
-            return summaries.clone();
-        }
-    }
-    // Only cache a successful parse. Caching a transient error's empty result would pin the dashboard
-    // at 0 runs until the tree fingerprint next shifts; returning the default un-cached self-heals on
-    // the next poll instead.
-    match crate::runs::list_run_summaries(repo_path) {
-        Ok(summaries) => {
-            summaries_cache().lock().unwrap().insert(key, (fp, summaries.clone()));
-            summaries
-        }
-        Err(_) => Vec::new(),
-    }
-}
+use crate::sidecar::Sidecar;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,16 +48,16 @@ pub fn save_paths(config_dir: &Path, paths: &[String]) -> io::Result<()> {
 }
 
 /// Aggregate a repo's `.vanguard/runs` into a dashboard summary (+ live running count).
-pub fn aggregate(repo_path: &Path) -> Project {
-    aggregate_at(repo_path, Utc::now())
+pub fn aggregate(state: &Sidecar, repo_path: &Path) -> Project {
+    let summaries = crate::runs::list_runs(state, repo_path).unwrap_or_default();
+    aggregate_at(repo_path, &summaries, Utc::now())
 }
 
-fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
+fn aggregate_at(repo_path: &Path, summaries: &[serde_json::Value], now: DateTime<Utc>) -> Project {
     let name = repo_path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| repo_path.to_string_lossy().into_owned());
-    let summaries = cached_summaries(repo_path);
     let cutoff = now - Duration::hours(24);
 
     let mut tasks = BTreeSet::new();
@@ -100,16 +65,19 @@ fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
     let mut failed_count = 0;
     let mut runs_last_24h = 0;
     let mut last_run: Option<String> = None;
-    for s in &summaries {
-        tasks.insert(s.task_id.clone());
-        total_cost_usd += s.total_cost_usd;
-        if s.any_failed {
+    let mut run_count = 0;
+    for s in summaries {
+        let (Some(task_id), Some(timestamp)) = (s["taskId"].as_str(), s["timestamp"].as_str()) else { continue };
+        run_count += 1;
+        tasks.insert(task_id);
+        total_cost_usd += s["totalCostUsd"].as_f64().unwrap_or(0.0);
+        if s["anyFailed"].as_bool().unwrap_or(false) {
             failed_count += 1;
         }
-        if last_run.as_deref().is_none_or(|l| s.timestamp.as_str() > l) {
-            last_run = Some(s.timestamp.clone());
+        if last_run.as_deref().is_none_or(|l| timestamp > l) {
+            last_run = Some(timestamp.to_string());
         }
-        if let Ok(dt) = DateTime::parse_from_rfc3339(&s.timestamp) {
+        if let Ok(dt) = DateTime::parse_from_rfc3339(timestamp) {
             if dt.with_timezone(&Utc) >= cutoff {
                 runs_last_24h += 1;
             }
@@ -121,7 +89,7 @@ fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
     Project {
         path: repo_path.to_string_lossy().into_owned(),
         name,
-        run_count: summaries.len(),
+        run_count,
         task_count: tasks.len(),
         total_cost_usd,
         failed_count,
@@ -132,110 +100,58 @@ fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
     }
 }
 
-pub fn list(config_dir: &Path) -> io::Result<Vec<Project>> {
+pub fn list(state: &Sidecar, config_dir: &Path) -> io::Result<Vec<Project>> {
     Ok(load_paths(config_dir)?
         .iter()
-        .map(|p| aggregate(Path::new(p)))
+        .map(|p| aggregate(state, Path::new(p)))
         .collect())
 }
 
-pub fn add(config_dir: &Path, path: &str) -> io::Result<Vec<Project>> {
+pub fn add(state: &Sidecar, config_dir: &Path, path: &str) -> io::Result<Vec<Project>> {
     let mut paths = load_paths(config_dir)?;
     if !paths.iter().any(|p| p == path) {
         paths.push(path.to_string());
     }
     save_paths(config_dir, &paths)?;
-    list(config_dir)
+    list(state, config_dir)
 }
 
-pub fn remove(config_dir: &Path, path: &str) -> io::Result<Vec<Project>> {
+pub fn remove(state: &Sidecar, config_dir: &Path, path: &str) -> io::Result<Vec<Project>> {
     let paths: Vec<String> = load_paths(config_dir)?
         .into_iter()
         .filter(|p| p != path)
         .collect();
     save_paths(config_dir, &paths)?;
-    list(config_dir)
+    list(state, config_dir)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn one_run_repo(repo: &Path) {
-        let f = repo.join(".vanguard/runs/task-1/2026-07-06T19-12-02-123Z-implement.json");
-        fs::create_dir_all(f.parent().unwrap()).unwrap();
-        fs::write(
-            &f,
-            r#"{"taskId":"task-1","completed":true,"exitReason":"completed","turns":3,
-                "worktreePath":"/tmp/wt","worktreePreserved":false,"finalText":"ok",
-                "costUsd":0.10,"timestamp":"2026-07-06T19:12:02.123Z","stage":"implement"}"#,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn aggregate_counts_a_repo() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("proj-a");
-        one_run_repo(&repo);
-        // Fixed "now" ~48m after the fixture run so the 24h velocity window is deterministic.
-        let now = DateTime::parse_from_rfc3339("2026-07-06T20:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let p = aggregate_at(&repo, now);
-        assert_eq!(p.name, "proj-a");
-        assert_eq!(p.run_count, 1);
-        assert_eq!(p.task_count, 1);
-        assert!((p.total_cost_usd - 0.10).abs() < 1e-9);
-        assert_eq!(p.failed_count, 0);
-        assert_eq!(p.last_run.as_deref(), Some("2026-07-06T19:12:02.123Z"));
-        assert_eq!(p.running_count, 0);
-        assert_eq!(p.runs_last_24h, 1);
-    }
-
     #[test]
     fn add_list_remove_roundtrip() {
         let cfg = tempfile::tempdir().unwrap();
         let repo_tmp = tempfile::tempdir().unwrap();
         let repo = repo_tmp.path().join("proj-a");
-        one_run_repo(&repo);
+        fs::create_dir_all(&repo).unwrap();
         let repo_str = repo.to_string_lossy().into_owned();
 
-        let after_add = add(cfg.path(), &repo_str).unwrap();
+        let after_add = add(&Sidecar::default(), cfg.path(), &repo_str).unwrap();
         assert_eq!(after_add.len(), 1);
-        assert_eq!(after_add[0].run_count, 1);
+        assert_eq!(after_add[0].path, repo_str);
 
         // dedup: adding the same path again keeps a single entry
-        assert_eq!(add(cfg.path(), &repo_str).unwrap().len(), 1);
+        assert_eq!(add(&Sidecar::default(), cfg.path(), &repo_str).unwrap().len(), 1);
 
-        let after_remove = remove(cfg.path(), &repo_str).unwrap();
+        let after_remove = remove(&Sidecar::default(), cfg.path(), &repo_str).unwrap();
         assert!(after_remove.is_empty());
     }
 
     #[test]
     fn missing_store_lists_empty() {
         let cfg = tempfile::tempdir().unwrap();
-        assert!(list(cfg.path()).unwrap().is_empty());
-    }
-
-    #[test]
-    fn cache_invalidates_when_a_run_is_added() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("proj-cache");
-        one_run_repo(&repo);
-        // First aggregate populates the summaries cache for this repo path.
-        assert_eq!(aggregate(&repo).run_count, 1);
-        // A second run under a new task dir must shift the fingerprint and bust the cache.
-        let f = repo.join(".vanguard/runs/task-2/2026-07-06T20-00-00-000Z-implement.json");
-        fs::create_dir_all(f.parent().unwrap()).unwrap();
-        fs::write(
-            &f,
-            r#"{"taskId":"task-2","completed":true,"exitReason":"completed","turns":1,
-                "worktreePath":"/tmp/wt","worktreePreserved":false,"finalText":"ok",
-                "costUsd":0.20,"timestamp":"2026-07-06T20:00:00.000Z","stage":"implement"}"#,
-        )
-        .unwrap();
-        assert_eq!(aggregate(&repo).run_count, 2);
+        assert!(list(&Sidecar::default(), cfg.path()).unwrap().is_empty());
     }
 
     #[test]
@@ -246,7 +162,43 @@ mod tests {
         // load errors instead of defaulting to empty...
         assert!(load_paths(cfg.path()).is_err());
         // ...and a failed add leaves the original bytes intact (no overwrite/wipe).
-        assert!(add(cfg.path(), "/some/repo").is_err());
+        assert!(add(&Sidecar::default(), cfg.path(), "/some/repo").is_err());
         assert_eq!(fs::read_to_string(&store).unwrap(), "{ not valid json");
+    }
+
+    #[test]
+    fn aggregates_forwarded_summaries() {
+        let now = DateTime::parse_from_rfc3339("2026-07-06T20:00:00Z").unwrap().with_timezone(&Utc);
+        let summaries = [
+            serde_json::json!({"taskId":"a","timestamp":"2026-07-06T19:00:00Z","totalCostUsd":0.1,"anyFailed":false}),
+            serde_json::json!({"taskId":"b","timestamp":"2026-07-04T19:00:00Z","totalCostUsd":0.2,"anyFailed":true,"prUrl":"url"}),
+        ];
+        let p = aggregate_at(Path::new("/repo/proj"), &summaries, now);
+        assert_eq!((p.run_count, p.task_count, p.failed_count, p.runs_last_24h), (2, 2, 1, 1));
+        assert!((p.total_cost_usd - 0.3).abs() < 1e-9);
+        assert_eq!(p.last_run.as_deref(), Some("2026-07-06T19:00:00Z"));
+        assert_eq!((p.name.as_str(), p.path.as_str()), ("proj", "/repo/proj"));
+    }
+
+    #[test]
+    fn empty_summaries_preserve_project() {
+        let p = aggregate_at(Path::new("/repo/proj"), &[], Utc::now());
+        assert_eq!((p.run_count, p.task_count, p.failed_count, p.runs_last_24h, p.running_count), (0, 0, 0, 0, 0));
+        assert_eq!(p.total_cost_usd, 0.0);
+        assert_eq!(p.last_run, None);
+        assert_eq!((p.name.as_str(), p.path.as_str()), ("proj", "/repo/proj"));
+    }
+
+    #[test]
+    fn skips_incomplete_summaries_and_defaults_invalid_costs() {
+        let summaries = [
+            serde_json::json!({"taskId":"a"}),
+            serde_json::json!({"timestamp":"ts"}),
+            serde_json::json!({"taskId":"b","timestamp":"ts"}),
+            serde_json::json!({"taskId":"c","timestamp":"ts","totalCostUsd":"bad"}),
+        ];
+        let p = aggregate_at(Path::new("/repo/proj"), &summaries, Utc::now());
+        assert_eq!((p.run_count, p.task_count), (2, 2));
+        assert_eq!(p.total_cost_usd, 0.0);
     }
 }

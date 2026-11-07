@@ -20,6 +20,8 @@ function fakeDeps(createRun: SidecarDeps['createRun']): SidecarDeps {
     fetchSpec: unimplemented,
     listRepoFiles: unimplemented,
     readRepoFile: unimplemented,
+    listRuns: unimplemented,
+    readRun: unimplemented,
   };
 }
 

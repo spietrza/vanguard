@@ -15,39 +15,41 @@ fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn list_runs(repo_path: String) -> Result<Vec<runs::RunSummary>, String> {
-    runs::list_run_summaries(Path::new(&repo_path)).map_err(|e| e.to_string())
+#[tauri::command(async)]
+fn list_runs(state: tauri::State<'_, sidecar::Sidecar>, repo_path: String) -> Result<serde_json::Value, String> {
+    runs::list_runs(&state, Path::new(&repo_path)).map(serde_json::Value::from)
 }
 
-#[tauri::command]
-async fn read_run(
+#[tauri::command(async)]
+fn read_run(
+    state: tauri::State<'_, sidecar::Sidecar>,
     app: tauri::AppHandle,
     repo_path: String,
     task_id: String,
     timestamp: String,
     source: remote::RunSource,
-) -> Result<runs::RunDetail, String> {
+) -> Result<serde_json::Value, String> {
     let root = remote::resolve_root(&config_dir(&app)?, Path::new(&repo_path), &source);
-    runs::read_run_detail(&root, &task_id, &timestamp).map_err(|e| e.to_string())
+    runs::read_run(&state, &root, &task_id, &timestamp)
 }
 
-#[tauri::command]
-async fn list_projects(app: tauri::AppHandle) -> Result<Vec<projects::Project>, String> {
-    projects::list(&config_dir(&app)?).map_err(|e| e.to_string())
+#[tauri::command(async)]
+fn list_projects(state: tauri::State<'_, sidecar::Sidecar>, app: tauri::AppHandle) -> Result<Vec<projects::Project>, String> {
+    projects::list(&state, &config_dir(&app)?).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn add_project(app: tauri::AppHandle, path: String) -> Result<Vec<projects::Project>, String> {
-    projects::add(&config_dir(&app)?, &path).map_err(|e| e.to_string())
+#[tauri::command(async)]
+fn add_project(state: tauri::State<'_, sidecar::Sidecar>, app: tauri::AppHandle, path: String) -> Result<Vec<projects::Project>, String> {
+    projects::add(&state, &config_dir(&app)?, &path).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn remove_project(
+#[tauri::command(async)]
+fn remove_project(
+    state: tauri::State<'_, sidecar::Sidecar>,
     app: tauri::AppHandle,
     path: String,
 ) -> Result<Vec<projects::Project>, String> {
-    projects::remove(&config_dir(&app)?, &path).map_err(|e| e.to_string())
+    projects::remove(&state, &config_dir(&app)?, &path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -126,13 +128,14 @@ async fn list_remote_runs(app: tauri::AppHandle, repo_path: String) -> Result<Ve
 /// Pull a CI run's record artifact into `<app config>/remote-runs/…` and parse it like local runs.
 /// Shared command name/shape with the hub's `import_remote_run` (src/hub/rpc.ts) — each backend
 /// resolves the `{kind: 'ci', runId}` source this hands back to its own root in `read_run`.
-#[tauri::command]
-async fn import_remote_run(
+#[tauri::command(async)]
+fn import_remote_run(
+    state: tauri::State<'_, sidecar::Sidecar>,
     app: tauri::AppHandle,
     repo_path: String,
     run_id: u64,
 ) -> Result<remote::RemoteImport, String> {
-    remote::import_remote_run(&config_dir(&app)?, Path::new(&repo_path), run_id)
+    remote::import_remote_run(&state, &config_dir(&app)?, Path::new(&repo_path), run_id)
 }
 
 /// Board read path (S9): one brain — the transports live in core now. Same command name, new

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { VanguardError } from '../core/errors.js';
 import { assertFlowResolvable, FlowError } from '../flows/repo.js';
@@ -30,6 +30,8 @@ const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
   fetchSpec: async () => ({ spec: '# t' }),
   listRepoFiles: async () => ({ files: [], capped: false }),
   readRepoFile: async () => ({ path: 'x', content: '', truncated: false }),
+  listRuns: async () => [],
+  readRun: async () => ({ taskId: 't', timestamp: 'ts', stages: [] }),
   ...over,
 });
 
@@ -297,5 +299,38 @@ describe('createTask over the protocol', () => {
     );
     for (const line of out) expect(JSON.parse(line).error.kind).toBe('bad-request');
     expect(created).toBe(0); // nothing reached the transport
+  });
+});
+
+describe('run-store protocol', () => {
+  it.each(['listRuns', 'readRun'] as const)('%s forwards params and returns a correlated result', async (method) => {
+    const params = method === 'listRuns' ? { repoPath: '/repo' } : { repoPath: '/repo', taskId: 't', timestamp: 'ts' };
+    const result = method === 'listRuns' ? [{ taskId: 't', timestamp: 'ts', stages: [], totalCostUsd: 0, anyFailed: false }] : { taskId: 't', timestamp: 'ts', stages: [] };
+    const dep = vi.fn(async () => result);
+    const deps = stubDeps({ [method]: dep });
+    const { write, out } = collect();
+    await runSidecar(lines(JSON.stringify({ id: 'run', method, params })), write, deps);
+    expect(dep).toHaveBeenCalledWith(params);
+    expect(out.map((line) => JSON.parse(line))).toEqual([{ id: 'run', result }]);
+  });
+
+  const invalid = [
+    ...[undefined, '', ' ', 'relative'].flatMap((repoPath) => [
+      { method: 'listRuns', params: { repoPath } },
+      { method: 'readRun', params: { repoPath, taskId: 't', timestamp: 'ts' } },
+    ]),
+    ...['../other', '..', 'a/b', 'a\\b', '', '/abs', undefined].map((taskId) => ({
+      method: 'readRun', params: { repoPath: '/repo', taskId, timestamp: 'ts' },
+    })),
+    ...[undefined, '', ' '].map((timestamp) => ({
+      method: 'readRun', params: { repoPath: '/repo', taskId: 't', timestamp },
+    })),
+  ];
+  it.each(invalid)('rejects $method $params before dispatch', async ({ method, params }) => {
+    const dep = vi.fn();
+    const { write, out } = collect();
+    await runSidecar(lines(JSON.stringify({ id: 'bad', method, params })), write, stubDeps({ [method]: dep }));
+    expect(dep).not.toHaveBeenCalled();
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'bad', error: { kind: 'bad-request' } });
   });
 });
