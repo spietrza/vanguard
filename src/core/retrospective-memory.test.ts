@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -365,6 +365,20 @@ describe('loadRetrospectiveMemory', () => {
     const content = await readFile(path, 'utf8');
     expect(content).toContain('TES-R');
     expect(content).toContain('timeout');
+  });
+
+  it('writeRetrospectiveMarkdown refuses a committed retrospective.md symlink and keeps the target', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'vg-retro-outside-'));
+    try {
+      const victim = join(outside, 'notes.txt');
+      await writeFile(victim, 'operator notes\n');
+      await mkdir(join(repo, '.vanguard', 'memory'), { recursive: true });
+      await symlink(victim, join(repo, '.vanguard', 'memory', 'retrospective.md'));
+      await expect(writeRetrospectiveMarkdown(repo, '# dummy\n')).rejects.toThrow(/symlink/);
+      expect(await readFile(victim, 'utf8')).toBe('operator notes\n');
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it('writeRetrospectiveMarkdown writes the given markdown and returns the path', async () => {

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { WorktreeManager } from './manager.js';
+import { WorktreeError } from '../core/errors.js';
 
 let repo: string;
 let wm: WorktreeManager;
@@ -97,5 +98,19 @@ describe('WorktreeManager', () => {
     const paths = await wm.changedPaths(wt.path);
     expect(paths).toContain('one.txt');
     expect(paths).toContain('two.txt');
+  });
+});
+
+describe('WorktreeManager — committed symlink under .vanguard', () => {
+  it('refuses to create a worktree through a symlinked .vanguard/worktrees', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'vg-wt-outside-'));
+    try {
+      await mkdir(join(repo, '.vanguard'));
+      await symlink(outside, join(repo, '.vanguard', 'worktrees'));
+      await expect(wm.create('task-1', 'main')).rejects.toBeInstanceOf(WorktreeError);
+      expect(await readdir(outside)).toEqual([]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

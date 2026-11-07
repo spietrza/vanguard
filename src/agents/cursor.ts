@@ -1,5 +1,5 @@
 import { AgentError } from '../core/errors.js';
-import { redactTokens } from '../core/secret-scan.js';
+import { redactForPublish } from '../core/secret-scan.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './provider.js';
 import { shellQuote, assistantText } from './shell.js';
 
@@ -132,8 +132,8 @@ export class CursorProvider implements AgentProvider {
     // Masked like codex.ts: this text reaches the run log and the issue comment, and cursor's key is
     // injected straight into the sandbox, so raw stderr/stdout could carry it.
     const detail = (): string => {
-      const err = redactTokens(res.stderr.trim());
-      const out = redactTokens(res.stdout.trim()).slice(-1500);
+      const err = redactForPublish(res.stderr.trim());
+      const out = redactForPublish(res.stdout.trim()).slice(-1500);
       return [err !== '' ? `stderr: ${err}` : '', out !== '' ? `stdout: ${out}` : ''].filter(Boolean).join(' | ') || '(no output)';
     };
     if (!parsedAny) throw new AgentError(`Agent produced no parseable output (exit ${res.exitCode}): ${detail()}`);

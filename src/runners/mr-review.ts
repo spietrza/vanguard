@@ -1,7 +1,8 @@
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
-import { defaultGlabRunner, encodeProject, neutralizeQuickActions } from '../tasks/gitlab.js';
+import { defaultGlabRunner, encodeProject, glabUser, neutralizeQuickActions } from '../tasks/gitlab.js';
 import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, omitGeneratedFiles, outputTail, reviewOutcomeUsable, stripReviewMarkers, VERDICT_CONTRADICTION_LOG, verdictContradictsFindings } from './review-prompt.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 export interface MergeRequestReviewTarget {
   project: string;
@@ -168,27 +169,6 @@ export function hasMergeRequestReviewMarker(body: string, sha: string): boolean 
   return Array.from(body.matchAll(MR_REVIEW_MARKER_RE)).some((m) => m[1] === sha);
 }
 
-// The glab user is constant for the process, and watch-mrs checks every MR on every poll. A failed
-// lookup is dropped from the cache so the next call retries it.
-const glabUsers = new WeakMap<GlabRunner, Promise<string>>();
-
-function glabUser(glab: GlabRunner): Promise<string> {
-  const cached = glabUsers.get(glab);
-  if (cached !== undefined) return cached;
-  const user = glab(['api', 'user'])
-    .then((out) => {
-      const name = (JSON.parse(out) as { username?: string }).username;
-      if (name === undefined || name === '') throw new Error('it returned no username');
-      return name;
-    })
-    .catch((error: unknown) => {
-      throw new Error(`cannot read the glab user; the token must be able to read GET /user (${errorText(error)})`, { cause: error });
-    });
-  glabUsers.set(glab, user);
-  user.catch(() => glabUsers.delete(glab));
-  return user;
-}
-
 /**
  * Whether one of the MR's latest 500 notes carries the Vanguard review marker for `sha` and was written by
  * the user glab runs as. Only that author counts: anyone on the MR can post an invisible marker note to
@@ -241,7 +221,7 @@ export async function postMergeRequestNote(
     'mr', 'note', 'create',
     String(target.iid),
     '--repo', target.project,
-    '-m', neutralizeQuickActions(body),
+    '-m', neutralizeQuickActions(redactForPublish(body)),
   ]);
 }
 

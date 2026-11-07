@@ -122,6 +122,13 @@ export async function runComplete(req: unknown, deps: CompleteDeps): Promise<Com
     return { error: { message: `attached files exceed the ${MAX_INLINE_TOTAL_BYTES}-byte inline limit (${inlineTotal} bytes)` } };
   }
 
+  // baseUrl comes from the project's `.vanguard/app.json` (repo content) and the inherited credential
+  // follows it, so only an origin the operator allowed in their own environment may receive it.
+  if (parsed.baseUrl !== undefined) {
+    const refused = baseUrlRefusal(parsed.baseUrl, process.env[CHAT_ALLOWED_ORIGINS_ENV]);
+    if (refused !== undefined) return { error: { message: refused } };
+  }
+
   try {
     const stream = deps.query({
       prompt: buildPrompt(parsed),
@@ -147,6 +154,42 @@ export async function runComplete(req: unknown, deps: CompleteDeps): Promise<Com
     return { error: { message: 'no result from the model' } };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : String(err) } };
+  }
+}
+
+/** Operator-local allowlist (comma-separated origins) for a non-Anthropic `chatBaseUrl`. */
+export const CHAT_ALLOWED_ORIGINS_ENV = 'VANGUARD_CHAT_ALLOWED_ORIGINS';
+
+/** The origin the inherited Anthropic credential may always be sent to. */
+const ANTHROPIC_ORIGIN = 'https://api.anthropic.com';
+
+/**
+ * Why `baseUrl` may not receive the inherited credential, or undefined when it may. Allowed: the
+ * Anthropic API origin, or an origin listed in `allowList` (VANGUARD_CHAT_ALLOWED_ORIGINS, the
+ * operator's own environment — never repo content, which is where `chatBaseUrl` comes from).
+ */
+export function baseUrlRefusal(baseUrl: string, allowList: string | undefined): string | undefined {
+  const origin = originOf(baseUrl);
+  if (origin === undefined) return `doc chat refused: chatBaseUrl "${baseUrl}" is not an absolute http(s) URL`;
+  if (origin === ANTHROPIC_ORIGIN) return undefined;
+  const allowed = (allowList ?? '')
+    .split(',')
+    .map((entry) => originOf(entry.trim()))
+    .filter((o): o is string => o !== undefined);
+  if (allowed.includes(origin)) return undefined;
+  return (
+    `doc chat refused: chatBaseUrl origin ${origin} is not allowed to receive your Anthropic credential. ` +
+    `To allow it, add it to ${CHAT_ALLOWED_ORIGINS_ENV} (comma-separated origins) in the environment Vanguard runs in.`
+  );
+}
+
+/** The `scheme://host[:port]` of an absolute http(s) URL, or undefined for anything else. */
+function originOf(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.origin : undefined;
+  } catch {
+    return undefined;
   }
 }
 

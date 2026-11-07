@@ -1,6 +1,7 @@
 import { AgentError } from '../core/errors.js';
 import type { AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './provider.js';
 import { shellQuote, assistantText } from './shell.js';
+import { isSafeSessionId } from './session-store.js';
 
 interface StreamMessage {
   type?: string;
@@ -54,6 +55,7 @@ export async function* runClaudeCli(
   let sawResult = false;
   let parsedAny = false;
   let realTurns = 0;
+  let droppedSessionId = false;
 
   for (const line of res.stdout.split('\n')) {
     const trimmed = line.trim();
@@ -65,7 +67,12 @@ export async function* runClaudeCli(
       continue; // skip non-JSON diagnostic lines
     }
     parsedAny = true;
-    if (msg.session_id !== undefined) sessionId = msg.session_id;
+    // The id names host files on capture/restore and the agent controls this stream: keep only a
+    // plain id token, so a forged `session_id` cannot smuggle a path (it is treated as no session).
+    if (msg.session_id !== undefined) {
+      if (typeof msg.session_id === 'string' && isSafeSessionId(msg.session_id)) sessionId = msg.session_id;
+      else droppedSessionId = true;
+    }
     if (typeof msg.model === 'string') model = msg.model;
     else if (typeof msg.message?.model === 'string') model = msg.message.model;
     if (msg.type === 'assistant') {
@@ -86,6 +93,8 @@ export async function* runClaudeCli(
       if (typeof msg.total_cost_usd === 'number') costUsd = msg.total_cost_usd;
     }
   }
+
+  if (droppedSessionId) console.warn('vanguard: ignored a malformed session_id in the claude stream (no resume from it)');
 
   // Only a genuine crash (no result produced) is an error. The CLI returns a non-zero exit code
   // for graceful stops too (max_turns, max_budget), so do not treat exit code alone as failure.

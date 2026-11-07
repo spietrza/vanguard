@@ -508,8 +508,9 @@ export interface Commands {
   /** HUB_ONLY: clone a repository under the browse root and register it. */
   clone_project: { args: { url: string; parentDir: string; name?: string }; result: Project };
   /** TAURI_ONLY: the Fleet screen's shell-spawn surface — disabled in hub mode (remote code
-   * execution on a reachable server). */
-  spawn_run: { args: { cwd: string; command: string }; result: number };
+   * execution on a reachable server). `argv[0]` is the program, run WITHOUT a shell: values built
+   * from repo config travel as single arguments and can never introduce shell syntax. */
+  spawn_run: { args: { cwd: string; argv: string[] }; result: number };
   /** TAURI_ONLY (see spawn_run). */
   kill_run: { args: { pid: number }; result: void };
   /** TAURI_ONLY (see spawn_run). */
