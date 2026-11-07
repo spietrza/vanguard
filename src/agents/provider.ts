@@ -45,6 +45,10 @@ export interface AgentRunOutput {
   transcript?: string;
   /** Model the provider actually ran, parsed from its output stream when available. */
   model?: string;
+  /** The CLI's own classification of why the turn ended (e.g. 'success', 'error_max_turns'); the terminal_reason/stop-reason diagnostic for a run that ended with no final text. */
+  stopReason?: string;
+  /** Truncated summary of the last assistant message's content blocks; set only when finalText ended up empty, so there is still evidence of what the spent tokens went to (thinking/tool_use instead of a reply). */
+  lastBlock?: string;
 }
 
 /** Which CLI an adapter drives — the trait callers need instead of matching provider names. */
