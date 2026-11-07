@@ -362,7 +362,7 @@ describe('runRevisePullRequest happy path', () => {
     // Push was called
     const pushCall = pushCalls.find((c) => c.file === 'git' && c.args[0] === 'push');
     expect(pushCall).toBeDefined();
-    expect(pushCall?.args).toContain('HEAD:feature-branch');
+    expect(pushCall?.args).toContain('HEAD:refs/heads/feature-branch');
 
     // gh pr ready was called
     const readyCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'ready');
@@ -648,9 +648,9 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
     else process.env.VANGUARD_PUSH_TOKEN = ORIGINAL_TOKEN;
   });
 
-  it('when set, the push argv carries the extraheader override and still targets HEAD:feature-branch', async () => {
+  it('when set, the push env carries the extraheader override (not argv) and still targets the PR head', async () => {
     process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
-    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string; env?: Record<string, string> }> = [];
     const gh: GhRunner = async (args) => {
       if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
@@ -674,8 +674,8 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
       _sandbox: makeSandbox(),
       _agent: agentThatCompletes([]),
       _worktrees: new WorktreeManager(repo),
-      _pushRunner: async (file, args, cwd) => {
-        pushCalls.push({ file, args, cwd });
+      _pushRunner: async (file, args, cwd, env) => {
+        pushCalls.push({ file, args, cwd, ...(env !== undefined ? { env } : {}) });
         return '';
       },
       _baseBranch: 'feature-branch',
@@ -684,19 +684,13 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
 
     const b64 = Buffer.from('x-access-token:test-pat').toString('base64');
     const pushCall = pushCalls.find((c) => c.file === 'git' && c.args.includes('push'));
-    expect(pushCall?.args).toEqual([
-      '-c',
-      `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
-      'push',
-      '--no-verify',
-      'origin',
-      'HEAD:feature-branch',
-    ]);
+    expect(pushCall?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:refs/heads/feature-branch']);
+    expect(Object.values(pushCall?.env ?? {})).toContain(`AUTHORIZATION: basic ${b64}`);
   });
 
   it('when unset, the push argv is unchanged (no -c prefix)', async () => {
     delete process.env.VANGUARD_PUSH_TOKEN;
-    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string; env?: Record<string, string> }> = [];
     const gh: GhRunner = async (args) => {
       if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
@@ -729,7 +723,7 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
     });
 
     const pushCall = pushCalls.find((c) => c.file === 'git' && c.args[0] === 'push');
-    expect(pushCall?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
+    expect(pushCall?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:refs/heads/feature-branch']);
   });
 
   it('when set, pr ready runs with GH_TOKEN set to the push token', async () => {
@@ -1334,7 +1328,7 @@ describe('pushToExistingBranch', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe('git');
-    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:fix-auth']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:refs/heads/fix-auth']);
     expect(calls[0]?.cwd).toBe('/fake/worktree');
   });
 
@@ -1357,7 +1351,7 @@ describe('pushToExistingBranch', () => {
     } as unknown as import('../core/vanguard.js').RunContext;
 
     await pushToExistingBranch(fakeCtx, { prHeadRef: 'my-branch', remote: 'upstream', runner });
-    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'upstream', 'HEAD:my-branch']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'upstream', 'HEAD:refs/heads/my-branch']);
   });
 });
 

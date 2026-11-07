@@ -56,3 +56,19 @@ test('a tracked symlink WITHIN the repo is fine', async () => {
   const res = await readRepoFile(r, 'alias.md');
   expect(res.content).toBe('in-repo');
 });
+
+test.skipIf(process.platform === 'win32')('a pathspec-magic name is matched literally, not as a glob', async () => {
+  const r = await repo({ 'tracked.md': 'ok' });
+  writeFileSync(join(r, '*'), 'untracked'); // `*` as a glob would match tracked.md
+  await expect(readRepoFile(r, '*')).rejects.toThrow(/not a tracked file/);
+  await execa('git', ['-C', r, 'add', '--', '*']);
+  expect((await readRepoFile(r, '*')).content).toBe('untracked');
+});
+
+test('a tracked symlink to an untracked file inside the repo is refused', async () => {
+  const r = await repo({ '.gitignore': '.env\n' });
+  writeFileSync(join(r, '.env'), 'SECRET=hunter2');
+  symlinkSync(join(r, '.env'), join(r, 'notes.md'));
+  await execa('git', ['-C', r, 'add', '-A']);
+  await expect(readRepoFile(r, 'notes.md')).rejects.toThrow(/not a tracked file/);
+});

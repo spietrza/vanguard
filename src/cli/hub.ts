@@ -91,7 +91,6 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
   const uiDir = resolve(command.uiDir ?? process.env.VANGUARD_HUB_UI_DIR ?? join(pkgRoot(), 'apps/desktop/dist'));
   await assertUiDirBuilt(uiDir);
 
-  const { version } = JSON.parse(await readFile(join(pkgRoot(), 'package.json'), 'utf8')) as { version: string };
   const configDir =
     process.env.VANGUARD_HUB_CONFIG_DIR ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'vanguard-hub');
   const isLoopback = LOOPBACK_HOSTS.includes(command.host);
@@ -123,7 +122,6 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
       allowAdd: process.env.VANGUARD_HUB_ALLOW_ADD === '1',
     },
     ...(seededRepoPath !== undefined ? { seedRepoPath: seededRepoPath } : {}),
-    version,
     watch: {
       forcePoll: process.env.VANGUARD_HUB_WATCH_POLL === '1',
       ...(Number(process.env.VANGUARD_HUB_WATCH_INTERVAL_MS) > 0

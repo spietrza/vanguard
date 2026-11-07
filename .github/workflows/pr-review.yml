@@ -173,7 +173,10 @@ jobs:
           IN_AUTHOR: ${{ inputs.author }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
           IN_SKILLS: ${{ inputs.skills }}
+          IN_ALLOWED_ACTORS: ${{ inputs.allowed-actors }}
         run: |
+          # Allowed actors also count as trusted PR authors (repo members always do).
+          feedback_authors=$(jq -r 'join(",")' <<<"$IN_ALLOWED_ACTORS")
           run_review() {
             local provider="$1" model="$2"
             local args=(watch-prs --once --github-repo "$GITHUB_REPOSITORY"
@@ -183,6 +186,7 @@ jobs:
               --repo "$GITHUB_WORKSPACE")
             [ -n "$IN_SKILLS" ] && args+=(--skills "$IN_SKILLS")
             [ -n "$IN_AUTHOR" ] && args+=(--author "$IN_AUTHOR")
+            [ -n "$feedback_authors" ] && args+=(--feedback-authors "$feedback_authors")
             [ -n "$provider" ] && args+=(--provider "$provider")
             [ -n "$model" ] && args+=(--review-model "$model")
             [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)

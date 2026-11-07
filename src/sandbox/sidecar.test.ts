@@ -26,11 +26,13 @@ describe('startSidecar', () => {
 
   it('secret mode: idle run → connect → cp → secret over stdin (umask 077) → exec -d with env; the secret never reaches argv', async () => {
     const calls: Call[] = [];
-    await startSidecar({ ...base, docker: stubDocker(calls), network: 'net', env: { PORT: '2' }, secret: { path: '/tmp/s', body: 'SECRET=hunter2\n' } });
+    await startSidecar({ ...base, docker: stubDocker(calls), network: 'net', env: { PORT: '2' }, secret: { path: '/run/s/secret', body: 'SECRET=hunter2\n' } });
     expect(calls.map((c) => c.args.slice(0, 2).join(' '))).toEqual(['run -d', 'network connect', 'cp /h/a.mjs', 'exec -i', 'exec -d']);
     expect(calls[0]!.args).toEqual(expect.arrayContaining(['sleep', 'infinity']));
+    // The secret's directory is an in-RAM tmpfs, so the file never lands in the writable layer.
+    expect(calls[0]!.args).toEqual(expect.arrayContaining(['--tmpfs', '/run/s:rw,noexec,nosuid,mode=1777,size=1m']));
     expect(calls[3]!.input).toBe('SECRET=hunter2\n');
-    expect(calls[3]!.args.join(' ')).toContain('umask 077; cat > /tmp/s');
+    expect(calls[3]!.args.join(' ')).toContain('umask 077; cat > /run/s/secret');
     expect(calls[4]!.args).toEqual(['exec', '-d', '-e', 'PORT=2', 'vg-x-1', 'node', '/tmp/a.mjs']);
     expect(calls.flatMap((c) => c.args).join(' ')).not.toContain('hunter2');
   });

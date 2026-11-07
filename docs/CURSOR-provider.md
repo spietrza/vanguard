@@ -27,6 +27,9 @@ boundary, as with codex's `danger-full-access`.
    CURSOR_CLI_VERSION=2026.10.16-e3cb207 ./docker/build.sh
    ```
 
+   The tarball is checked against a pinned per-arch sha256 (defaults match 2026.10.16-e3cb207). For another
+   version, also set `CURSOR_CLI_SHA256_X64` / `CURSOR_CLI_SHA256_ARM64` (the `sha256sum` of each arch's tarball).
+
    `vanguard doctor` checks for `agent` in the image whenever cursor is one of the providers.
 3. **GitHub Actions: not supported yet.** The reusable workflows do not install the Cursor CLI in the
    sandbox image and do not pass `CURSOR_API_KEY` through, so `provider: cursor` fails there. Cursor

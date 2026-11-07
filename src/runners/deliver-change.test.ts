@@ -141,7 +141,7 @@ describe('deliverChange', () => {
       const log = (await execa('git', ['log', '-1', '--format=%an <%ae> %s'], { cwd: ctx.worktreePath })).stdout;
       expect(log).toBe('Acme Bot <bot@acme.test> fix: address review feedback');
     });
-    expect(calls.some((a) => a[0] === 'push' && a.includes('HEAD:pr-head'))).toBe(true);
+    expect(calls.some((a) => a[0] === 'push' && a.includes('HEAD:refs/heads/pr-head'))).toBe(true);
   });
 
   it('new-pr: builds the body after the commit with the closing-keyword leaks, pushes, opens the PR and reports the pushed head', async () => {

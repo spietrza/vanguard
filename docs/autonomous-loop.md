@@ -199,9 +199,9 @@ Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metri
 
 | Variable | Value |
 | --- | --- |
-| `VANGUARD_OTLP_ENDPOINT` (or the standard `OTEL_EXPORTER_OTLP_ENDPOINT`) | OTLP base; for Langfuse `https://<your-langfuse>/api/public/otel` (`/v1/traces` is appended) |
+| `VANGUARD_OTLP_ENDPOINT` (or the standard `OTEL_EXPORTER_OTLP_ENDPOINT`, honored only with `VANGUARD_OTEL=1`, so an inherited host-wide OTel config never starts an export) | OTLP base; for Langfuse `https://<your-langfuse>/api/public/otel` (`/v1/traces` is appended) |
 | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` | a Langfuse project key pair — Basic auth and the `x-langfuse-ingestion-version: 4` real-time header are derived; used only for a Langfuse-shaped endpoint (`VANGUARD_OTLP_ENDPOINT`, or a path containing `/api/public/otel`), so a host-wide `OTEL_EXPORTER_OTLP_ENDPOINT` never receives them |
-| `VANGUARD_OTLP_HEADERS` (or `OTEL_EXPORTER_OTLP_HEADERS`) | alternative for any other collector: the OTel `k=v,k2=v2` list, which must include `Authorization=…` |
+| `VANGUARD_OTLP_HEADERS` (or `OTEL_EXPORTER_OTLP_HEADERS`, again only with `VANGUARD_OTEL=1`) | alternative for any other collector: the OTel `k=v,k2=v2` list, which must include `Authorization=…` |
 
 The export is a hand-rolled OTLP/HTTP JSON POST from the host process (no OpenTelemetry SDK, nothing reaches the sandbox), fired from the same place the metric line is written so local and CI runs behave the same; a failure is reported once on stderr and never fails the run — `metrics.jsonl` stays the record of truth. **Self-hosting on Coolify:** deploy Langfuse from Coolify's one-click service template, create a project, copy its public/secret keys, and set the three variables where Taskcell runs (on GitHub Actions: a repository variable for the endpoint, two secrets for the keys, passed through the workflow's `env`).
 

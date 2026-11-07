@@ -126,6 +126,13 @@ describe('llm-proxy-server (booted child)', () => {
     ).toBe(401);
   }, 60_000);
 
+  it('refuses an encoded body it cannot inspect for egress tools with 415 (no upstream contacted)', async () => {
+    const s = track(await startServer('UPSTREAM=anthropic\nMODE=api\nSECRET=sk-ant-test\nNONCE=real-nonce\n'));
+    expect(
+      await hit(s.port, 'POST', '/v1/messages', { authorization: 'Bearer real-nonce', 'content-encoding': 'gzip' }),
+    ).toBe(415);
+  }, 60_000);
+
   it('openai: 404 on disallowed path and 401 on wrong nonce (no upstream contacted)', async () => {
     const s = track(await startServer('UPSTREAM=openai\nSECRET=sk-openai-test\nNONCE=real-nonce\n'));
     expect(await hit(s.port, 'POST', '/v1/models')).toBe(404);

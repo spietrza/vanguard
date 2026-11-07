@@ -10,7 +10,7 @@
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual, upstreamPath } from './llm-proxy-rewrite.mjs';
+import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual, upstreamPath, filterAnthropicBeta, stripEgressTools } from './llm-proxy-rewrite.mjs';
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONCURRENT = 8;
@@ -174,7 +174,14 @@ const server = createServer((req, res) => {
 
   req.on('end', () => {
     if (done || overflow) return;
-    const body = Buffer.concat(chunks, size);
+    // An encoded body could not be inspected for egress-capable tools: refuse it rather than pass it on.
+    const encoding = String(req.headers['content-encoding'] ?? 'identity').trim().toLowerCase();
+    if (encoding !== '' && encoding !== 'identity') {
+      finish(req, res, 415, started);
+      cleanup();
+      return;
+    }
+    const body = stripEgressTools(Buffer.concat(chunks, size));
     forward(req, res, body, started, (up) => {
       upstream = up;
     }, cleanup, () => done);
@@ -188,6 +195,12 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
     const lower = key.toLowerCase();
     if (lower === 'authorization' || lower === 'x-api-key' || lower === 'host') continue;
     if (HOP_BY_HOP.has(lower)) continue;
+    if (lower === 'anthropic-beta') {
+      // Every upstream, not just anthropic-auth ones: drop beta families that open upstream-side egress.
+      const beta = filterAnthropicBeta(value);
+      if (beta !== undefined) headers[lower] = beta;
+      continue;
+    }
     if (value !== undefined) headers[lower] = value;
   }
 

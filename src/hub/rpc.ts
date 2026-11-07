@@ -15,7 +15,7 @@ import { ProjectAllowlist, assertGitWorkTreeDir, assertMutationsAllowed, type Bi
 import { WatchRegistry } from './watch.js';
 import type { RunSession } from './run-session.js';
 import { CompleteRegistry, type CompleteParams } from './complete.js';
-import { browseDirs } from './browse.js';
+import { assertWithinBrowseRoot, browseDirs } from './browse.js';
 import { cloneProject } from './clone.js';
 import type { ErrorKind } from '../hub-wire.js';
 import { defaultRunsRoot, remoteRunsRoot, listRunSummaries, readRunDetail } from './runs.js';
@@ -117,9 +117,9 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
     }
     case 'add_project': {
       assertMutationsAllowed(ctx.bind);
-      const path = requireString(args, 'path');
-      await assertGitWorkTreeDir(path);
-      return projects.add(ctx.configDir, path);
+      const real = await assertWithinBrowseRoot(ctx.browseRoot, requireString(args, 'path'));
+      await assertGitWorkTreeDir(real);
+      return projects.add(ctx.configDir, real);
     }
     case 'clone_project': {
       assertMutationsAllowed(ctx.bind);

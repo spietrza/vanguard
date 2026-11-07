@@ -82,3 +82,12 @@ test('a failed docker step tears the enclave down and throws SandboxError', asyn
   expect(calls.some((c) => c[0] === 'rm' && c[1] === '-f')).toBe(true);
   expect(calls.some((c) => c[0] === 'network' && c[1] === 'rm')).toBe(true);
 });
+
+test('trusted custom hosts reach the proxy as TRUSTED; none by default', async () => {
+  const withTrusted = recordingDocker();
+  await startEgressEnclave({ allowlist: ['a.example', 'lan.example'], trusted: ['lan.example'], docker: withTrusted.docker });
+  expect(withTrusted.calls.find((c) => c[0] === 'create')).toContain('TRUSTED=lan.example');
+  const plain = recordingDocker();
+  await startEgressEnclave({ allowlist: ['a.example'], docker: plain.docker });
+  expect(plain.calls.find((c) => c[0] === 'create')!.join(' ')).not.toContain('TRUSTED=');
+});

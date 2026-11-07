@@ -23,14 +23,22 @@ describe('decisionModelConfig', () => {
     expect(decisionModelConfig({ ...cf, VANGUARD_DECISION_URL: 'http://ai-box/decide' }, 'jev')).toEqual({ url: 'http://ai-box/decide', model: 'jev' });
   });
 
-  it('warns once when a bearer token would travel over plain http to a non-local host', () => {
+  it('refuses plain http to a non-local host, with or without a token; local http stays allowed', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide', VANGUARD_DECISION_TOKEN: 't' });
-    expect(warn).toHaveBeenCalledTimes(1);
-    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://100.64.0.9:8080/decide', VANGUARD_DECISION_TOKEN: 't' }); // Tailscale
-    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://localhost:8080/decide', VANGUARD_DECISION_TOKEN: 't' });
-    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide' }); // no token, nothing to leak
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide', VANGUARD_DECISION_TOKEN: 't' })).toBeUndefined();
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide' })).toBeUndefined(); // the state still leaks
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://[2001:db8::1]/decide' })).toBeUndefined();
+    // A public name that merely starts like a private range is not local.
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://10.attacker.com/decide' })).toBeUndefined();
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://192.168.evil.io/decide' })).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(5);
+    expect(decisionModelMissing('clef', { VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide' })).toMatch(/use https/);
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://100.64.0.9:8080/decide', VANGUARD_DECISION_TOKEN: 't' })?.url).toBe('http://100.64.0.9:8080/decide'); // Tailscale
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://localhost:8080/decide', VANGUARD_DECISION_TOKEN: 't' })).toBeDefined();
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://[::1]:8080/decide' })).toBeDefined();
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'https://ai-box.example.com/decide', VANGUARD_DECISION_TOKEN: 't' })).toBeDefined();
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://192.168.1.214:8080/decide' })).toBeDefined();
+    expect(warn).toHaveBeenCalledTimes(5);
     warn.mockRestore();
   });
 

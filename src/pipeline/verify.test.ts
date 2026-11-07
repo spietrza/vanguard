@@ -303,6 +303,11 @@ describe('proofBlock', () => {
     expect(block).toContain('Tests passed: 42');
   });
 
+  it('fences the output tail with more backticks than any run inside it', () => {
+    const block = proofBlock({ ...baseResult, outputTail: 'before\n````\n## injected\n```' });
+    expect(block).toContain('\n`````\nbefore\n````\n## injected\n```\n`````\n');
+  });
+
   it('contains the exit code', () => {
     const block = proofBlock({ ...baseResult, exitCode: 42, passed: false });
     expect(block).toContain('42');

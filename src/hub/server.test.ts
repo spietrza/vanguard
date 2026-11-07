@@ -1,11 +1,15 @@
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { request } from 'node:http';
+import { PassThrough } from 'node:stream';
+import type { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { createHubServer, MAX_RPC_BODY_BYTES, type HubServer } from './server.js';
 import { listRunSummaries, defaultRunsRoot } from './runs.js';
+import { MAX_CONCURRENT_COMPLETES } from './complete.js';
 import type { SidecarDeps } from '../sidecar/sidecar.js';
 
 function unimplementedDeps(): SidecarDeps {
@@ -54,7 +58,6 @@ beforeEach(async () => {
     browseRoot,
     bind: { isLoopback: true, allowAdd: false },
     seedRepoPath: repo,
-    version: '0.0.0-test',
     deps: unimplementedDeps(),
     allowedHosts: ['Hub.Example'],
   });
@@ -137,10 +140,18 @@ describe('hub server', () => {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-vanguard-hub-token': token }, body: '{}',
       });
       expect(rpc.status).toBe(401);
-      expect((await fetch(baseUrl + '/events?token=' + token)).status).toBe(401);
+      expect((await fetch(baseUrl + '/events', { headers: { 'x-vanguard-hub-token': token } })).status).toBe(401);
+      expect((await fetch(baseUrl + '/events', { headers: { cookie: `vanguard_hub_events_x=${token}` } })).status).toBe(401);
+      const session = await fetch(baseUrl + '/events/session', {
+        method: 'POST', headers: { 'x-vanguard-hub-token': token, origin: baseUrl },
+      });
+      expect(session.status).toBe(401);
+      expect(session.headers.get('set-cookie')).toBeNull();
     }
     expect((await fetch(baseUrl + '/rpc/list_runs', { method: 'POST' })).status).toBe(401);
     expect((await fetch(baseUrl + '/events')).status).toBe(401);
+    // The token is never accepted from the URL, where access logs would keep it.
+    expect((await fetch(baseUrl + '/events?token=' + hub.token)).status).toBe(401);
     expect(hub.eventBus.clientCount).toBe(0);
   });
 
@@ -154,7 +165,7 @@ describe('hub server', () => {
 
   test('rejects lookalike JSON media types', async () => {
     const response = await fetch(baseUrl + '/rpc/list_runs', {
-      method: 'POST', headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/jsonp' }, body: '{}',
+      method: 'POST', headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/jsonp', origin: baseUrl }, body: '{}',
     });
     expect(response.status).toBe(400);
   });
@@ -182,10 +193,77 @@ describe('hub server', () => {
     }
   });
 
-  test('T-80 GET /healthz', async () => {
+  test('POST /events/session trades the token for an HttpOnly events-only cookie the stream accepts', async () => {
+    const session = await fetch(baseUrl + '/events/session', {
+      method: 'POST', headers: { 'x-vanguard-hub-token': hub.token, origin: baseUrl },
+    });
+    expect(session.status).toBe(200);
+    const setCookie = session.headers.get('set-cookie')!;
+    expect(setCookie).toMatch(/^vanguard_hub_events_[a-f0-9]{8}=[a-f0-9]{64}; Path=\/events; Max-Age=86400; HttpOnly; SameSite=Strict$/);
+    expect(setCookie).not.toContain(hub.token);
+    const cookie = setCookie.split(';', 1)[0]!;
+
+    const controller = new AbortController();
+    const stream = await fetch(baseUrl + '/events', { headers: { cookie }, signal: controller.signal });
+    expect(stream.status).toBe(200);
+    controller.abort();
+    // The cookie buys the stream only, never RPC.
+    const rpc = await fetch(baseUrl + '/rpc/list_runs', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: baseUrl }, body: '{}',
+    });
+    expect(rpc.status).toBe(401);
+  });
+
+  test('state-changing routes require an Origin header', async () => {
+    const rpc = await fetch(baseUrl + '/rpc/list_runs', {
+      method: 'POST', headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json' }, body: JSON.stringify({ repoPath: repo }),
+    });
+    expect(rpc.status).toBe(400);
+    expect(await rpc.json()).toMatchObject({ error: { message: 'cross-origin request rejected' } });
+    const session = await fetch(baseUrl + '/events/session', { method: 'POST', headers: { 'x-vanguard-hub-token': hub.token } });
+    expect(session.status).toBe(400);
+    expect(session.headers.get('set-cookie')).toBeNull();
+  });
+
+  test('T-80 GET /healthz answers without the token, with a constant body', async () => {
     const res = await fetch(`${baseUrl}/healthz`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, version: '0.0.0-test' });
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  test('api_complete past the concurrency cap answers 429', async () => {
+    let spawned = 0;
+    const busy = createHubServer({
+      uiDir,
+      configDir,
+      browseRoot,
+      bind: { isLoopback: true, allowAdd: false },
+      seedRepoPath: repo,
+      deps: unimplementedDeps(),
+      spawnComplete: () => {
+        spawned += 1;
+        return Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => true }) as unknown as ChildProcess;
+      },
+    });
+    await busy.listen(0, '127.0.0.1');
+    const busyUrl = `http://127.0.0.1:${(busy.server.address() as AddressInfo).port}`;
+    const call = (): Promise<Response> =>
+      fetch(`${busyUrl}/rpc/api_complete`, {
+        method: 'POST',
+        headers: { 'x-vanguard-hub-token': busy.token, 'content-type': 'application/json', origin: busyUrl },
+        body: JSON.stringify({ repoPath: repo, req: { model: 'm', messages: [] } }),
+      });
+    try {
+      const pending = Array.from({ length: MAX_CONCURRENT_COMPLETES }, () => call().catch(() => undefined));
+      while (spawned < MAX_CONCURRENT_COMPLETES) await new Promise((r) => setTimeout(r, 5));
+      const rejected = await call();
+      expect(rejected.status).toBe(429);
+      expect(await rejected.json()).toMatchObject({ error: { message: expect.stringContaining('too many doc chat requests') } });
+      expect(spawned).toBe(MAX_CONCURRENT_COMPLETES);
+      void Promise.all(pending);
+    } finally {
+      await busy.close();
+    }
   });
 
   test('T-81 POST /rpc/list_runs matches calling the reader directly', async () => {
@@ -209,7 +287,7 @@ describe('hub server', () => {
 
     const res = await fetch(`${baseUrl}/rpc/list_runs`, {
       method: 'POST',
-      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json' },
+      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json', origin: baseUrl },
       body: JSON.stringify({ repoPath: repo }),
     });
     expect(res.status).toBe(200);
@@ -222,7 +300,7 @@ describe('hub server', () => {
   test('T-81b a void command answers `{ result: null }`, never a bare body', async () => {
     const res = await fetch(`${baseUrl}/rpc/unwatch_project`, {
       method: 'POST',
-      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json' },
+      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json', origin: baseUrl },
       body: JSON.stringify({ repoPath: repo }),
     });
     expect(res.status).toBe(200);
@@ -232,7 +310,7 @@ describe('hub server', () => {
   test('T-81c a `false` result survives the envelope (api_repo_ok on a path outside the allowlist)', async () => {
     const res = await fetch(`${baseUrl}/rpc/api_repo_ok`, {
       method: 'POST',
-      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json' },
+      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json', origin: baseUrl },
       body: JSON.stringify({ repoPath: '/definitely/not/allowlisted' }),
     });
     expect(res.status).toBe(200);
@@ -243,7 +321,7 @@ describe('hub server', () => {
   test('T-82 an oversized body is rejected with 413', async () => {
     const res = await fetch(`${baseUrl}/rpc/list_runs`, {
       method: 'POST',
-      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json', 'content-length': String(MAX_RPC_BODY_BYTES + 1) },
+      headers: { 'x-vanguard-hub-token': hub.token, 'content-type': 'application/json', 'content-length': String(MAX_RPC_BODY_BYTES + 1), origin: baseUrl },
       body: 'x'.repeat(MAX_RPC_BODY_BYTES + 1),
     });
     expect(res.status).toBe(413);
@@ -270,7 +348,7 @@ describe('hub server', () => {
 
     const noContentType = await fetch(`${baseUrl}/rpc/list_runs`, {
       method: 'POST',
-      headers: { 'x-vanguard-hub-token': hub.token },
+      headers: { 'x-vanguard-hub-token': hub.token, origin: baseUrl },
       body: JSON.stringify({ repoPath: repo }),
     });
     expect(noContentType.status).toBe(400);
@@ -293,7 +371,7 @@ describe('hub server', () => {
 
   test('T-85 close() ends connected SSE clients and shuts the server down', async () => {
     const controller = new AbortController();
-    const sseRes = await fetch(`${baseUrl}/events?token=${hub.token}`, { signal: controller.signal });
+    const sseRes = await fetch(`${baseUrl}/events`, { headers: { 'x-vanguard-hub-token': hub.token }, signal: controller.signal });
     expect(sseRes.status).toBe(200);
     expect(hub.eventBus.clientCount).toBe(1);
 

@@ -14,11 +14,14 @@
  * invoke/listen. */
 export const HUB_MARKER = '<script>window.__VANGUARD_HUB__=true</script>';
 
-/** Per-launch auth token (src/hub/server.ts), carried on every `/rpc/*` request as this header and
- * on `/events` (an `EventSource` cannot set headers) as this query parameter. Both sides read the
- * same two names from here so they cannot drift. */
+/** Per-launch auth token (src/hub/server.ts), carried on every `/rpc/*` request as this header.
+ * An `EventSource` cannot set headers, and a token in the `/events` URL would land in access logs,
+ * so the browser first `POST`s this path with the header; the hub answers with an HttpOnly,
+ * SameSite=Strict cookie scoped to `/events` (a separate, events-only secret, never the token) that
+ * the `EventSource` then sends on every connect and reconnect. Both sides read the names from here
+ * so they cannot drift. */
 export const HUB_TOKEN_HEADER = 'x-vanguard-hub-token';
-export const HUB_TOKEN_QUERY_PARAM = 'token';
+export const HUB_EVENTS_SESSION_PATH = '/events/session';
 
 /** The launch URL (`src/cli/hub.ts`) carries the token in its fragment as `#<this>=<token>` — a
  * fragment never reaches the server, so the page `GET /` serves holds no token. The SPA reads it

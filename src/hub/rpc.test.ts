@@ -355,3 +355,17 @@ test('clone_project enforces mutation permissions before cloning', async () => {
     mock.mockRestore();
   }
 });
+
+test('add_project is confined to the browse root, like browse_dirs', async () => {
+  const outsideRepo = await tmpRepo();
+  await mkdir(join(outsideRepo, '.git'));
+  const { ctx } = await makeCtx(outsideRepo);
+  await expect(dispatchRpc(ctx, 'add_project', { path: outsideRepo })).rejects.toThrow('path escapes the browse root');
+  expect(await loadPaths(ctx.configDir)).toEqual([]);
+
+  const inside = join(await realpath(ctx.browseRoot), 'repo');
+  await mkdir(join(inside, '.git'), { recursive: true });
+  // An unresolved spelling (`..`, a symlinked temp dir) is stored as its realpath.
+  await dispatchRpc(ctx, 'add_project', { path: `${ctx.browseRoot}/repo/../repo` });
+  expect(await loadPaths(ctx.configDir)).toEqual([inside]);
+});

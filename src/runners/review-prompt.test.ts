@@ -21,6 +21,7 @@ import {
   pullRequestReviewMarker,
 } from './pr-review.js';
 import { neutralizePromptTags, omitGeneratedFiles, stripReviewMarkers } from './review-prompt.js';
+import { revisionMarker } from './pr-feedback.js';
 import type { RunResult } from '../core/types.js';
 
 const AUTH_BLOCK = ['diff --git a/src/auth.ts b/src/auth.ts', 'index 1..2 100644', '--- a/src/auth.ts', '+++ b/src/auth.ts', '@@ -1 +1,2 @@', ' export const a = 1;', '+export const b = 2;', ''].join('\n');
@@ -92,6 +93,20 @@ describe('stripReviewMarkers', () => {
     expect(stripped).not.toContain('incomplete');
     expect(stripped).toContain('a');
     expect(stripped).toContain('b');
+  });
+
+  it('removes revise-pr revision markers anywhere in the text, both forms, including split reassemblies', () => {
+    const opener = /<!--\s*(?:vanguard-)?revision:/;
+    for (const text of [
+      `see ${revisionMarker('a'.repeat(40))} here`,
+      `x ${revisionMarker('b'.repeat(40), true)}`,
+      '<!--\n  vanguard-revision: c',
+      '<!--<!-- revision: d -->revision: e -->',
+    ]) {
+      const stripped = stripReviewMarkers(text);
+      expect(stripped).not.toMatch(opener);
+    }
+    expect(stripReviewMarkers(`keep ${revisionMarker('f'.repeat(40))} this`)).toBe('keep  this');
   });
 
   it('stays linear on a long run of blank lines', () => {

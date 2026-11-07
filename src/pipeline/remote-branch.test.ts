@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { publishForReview, rebaseOntoRemoteBase, pushToExistingBranch, pushAuthConfigArgs } from './remote-branch.js';
+import { publishForReview, rebaseOntoRemoteBase, pushToExistingBranch, pushAuthEnv } from './remote-branch.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 
@@ -106,7 +106,7 @@ describe('publishForReview', () => {
       ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'FETCH_HEAD'],
       ['rev-parse', 'refs/heads/chore/vanguard-pub2-r2'],
-      ['push', '--no-verify', '-u', 'origin', 'chore/vanguard-pub2-r2'],
+      ['push', '--no-verify', '-u', 'origin', 'refs/heads/chore/vanguard-pub2-r2:refs/heads/chore/vanguard-pub2-r2'],
     ]);
     // The review marker must point at the rewritten head, not the SHA commitStage returned.
     expect(out.headSha).toBe('abc123rebased');
@@ -226,41 +226,41 @@ describe('publishForReview', () => {
   });
 });
 
-describe('pushAuthConfigArgs', () => {
-  it('builds the extraheader override with the base64-encoded token, defaulting to github.com', () => {
+describe('pushAuthEnv', () => {
+  it('builds the extraheader override as GIT_CONFIG_* env with the base64-encoded token, defaulting to github.com', () => {
     const b64 = Buffer.from('x-access-token:TOK').toString('base64');
-    expect(pushAuthConfigArgs('TOK')).toEqual(['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`]);
+    expect(pushAuthEnv('TOK', undefined, {})).toEqual({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${b64}`,
+    });
   });
 
-  it('honors a custom host', () => {
+  it('honors a custom host and appends after inherited GIT_CONFIG_* entries', () => {
     const b64 = Buffer.from('x-access-token:TOK').toString('base64');
-    expect(pushAuthConfigArgs('TOK', 'github.example.com')).toEqual([
-      '-c',
-      `http.https://github.example.com/.extraheader=AUTHORIZATION: basic ${b64}`,
-    ]);
+    expect(pushAuthEnv('TOK', 'github.example.com', { GIT_CONFIG_COUNT: '2' })).toEqual({
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_2: 'http.https://github.example.com/.extraheader',
+      GIT_CONFIG_VALUE_2: `AUTHORIZATION: basic ${b64}`,
+    });
   });
 });
 
 describe('pushToExistingBranch', () => {
-  it('with pushToken set, prepends the extraheader override before push', async () => {
+  it('with pushToken set, passes the extraheader override via env, never argv', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
     const ctx = await prepareContext({ taskId: 'push-token', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
-    const calls: Array<{ file: string; args: string[] }> = [];
-    const runner = async (file: string, args: string[]): Promise<string> => {
-      calls.push({ file, args });
+    const calls: Array<{ file: string; args: string[]; env?: Record<string, string> }> = [];
+    const runner = async (file: string, args: string[], _cwd: string, env?: Record<string, string>): Promise<string> => {
+      calls.push({ file, args, ...(env !== undefined ? { env } : {}) });
       return '';
     };
     await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', pushToken: 'TOK', runner });
     const b64 = Buffer.from('x-access-token:TOK').toString('base64');
     expect(calls[0]?.file).toBe('git');
-    expect(calls[0]?.args).toEqual([
-      '-c',
-      `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
-      'push',
-      '--no-verify',
-      'origin',
-      'HEAD:feature-branch',
-    ]);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:refs/heads/feature-branch']);
+    expect(calls[0]?.args.join(' ')).not.toContain(b64);
+    expect(Object.values(calls[0]?.env ?? {})).toContain(`AUTHORIZATION: basic ${b64}`);
     await disposeContext(ctx);
   });
 
@@ -273,7 +273,7 @@ describe('pushToExistingBranch', () => {
       return '';
     };
     await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', runner });
-    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:refs/heads/feature-branch']);
     await disposeContext(ctx);
   });
 

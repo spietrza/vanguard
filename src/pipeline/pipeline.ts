@@ -4,6 +4,7 @@ import { runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
 import { buildXmlPrompt } from '../context/xml-prompt.js';
+import { diffForPrompt } from '../context/escape.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
@@ -289,7 +290,9 @@ export async function runBudgetedStages(
 
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
-      PREVIOUS_DIFF: previous?.diff ?? '',
+      // The diff is agent-written content (file text, quoted issue text): no `<` may open or close a prompt
+      // block. diffForPrompt also prepends the escaping note, so every stage that shows the diff carries it.
+      PREVIOUS_DIFF: diffForPrompt(previous?.diff ?? ''),
       PREVIOUS_FINAL: previous?.finalText ?? '',
       PREVIOUS_STAGE: prevName,
       PREVIOUS_STAGE_TRUNCATED: previous !== undefined && previous.exitReason !== 'completed' ? 'true' : 'false',

@@ -1,4 +1,5 @@
 import { taskToVariables } from '../tasks/fetcher.js';
+import { escapePromptTags } from '../context/escape.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { forcedProviderModel, providerKeyEnvNames, selectAgents } from '../agents/registry.js';
@@ -157,7 +158,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       const specModel = deps.specModel ?? (forcesModel ? undefined : 'haiku');
       const outcomes = await runStages(ctx, techSpecStage({ ...(specModel !== undefined ? { model: specModel } : {}), ...(deps.maxTurns !== undefined ? { maxTurns: deps.maxTurns } : {}) }), {
         agent,
-        variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
+        variables: { ...taskToVariables(task, { allowedAuthors: deps.feedbackAuthors }), RETROSPECTIVE_MEMORY: escapePromptTags(retrospectiveMemory) },
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
       deps.logger?.info({ taskId: ctx.taskId }, summarizeOutcomes(outcomes));

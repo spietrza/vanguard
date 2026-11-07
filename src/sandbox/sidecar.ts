@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { execa } from 'execa';
 import { SandboxError } from '../core/errors.js';
 import { sandboxImage } from './docker.js';
@@ -46,7 +47,8 @@ export interface SidecarSpec {
   /**
    * A secret written over stdin into an in-RAM file (umask 077) before the process starts — never via
    * `-e` or argv, so `docker inspect` cannot reveal it. Needs a running container, so the launcher
-   * starts an idle one, writes, then execs the process detached.
+   * starts an idle one, writes, then execs the process detached. The file's directory is mounted as a
+   * dedicated tmpfs so the secret never lands in the container's writable layer (`docker commit`/`cp`).
    */
   secret?: { path: string; body: string };
   /** Teardown hook for resources created alongside the container (e.g. a network), run after `rm -f`. */
@@ -89,7 +91,9 @@ export async function startSidecar(spec: SidecarSpec): Promise<Sidecar> {
       await must(['start', name]);
     } else {
       // Secret over stdin needs a running container: idle PID 1, write, then exec the process detached.
-      await must(['run', '-d', ...common, image, 'sleep', 'infinity']);
+      const secretDir = posix.dirname(spec.secret.path);
+      const tmpfs = ['--tmpfs', `${secretDir}:rw,noexec,nosuid,mode=1777,size=1m`];
+      await must(['run', '-d', ...common, ...tmpfs, image, 'sleep', 'infinity']);
       if (spec.network !== undefined) await must(['network', 'connect', spec.network, name]);
       for (const f of spec.files) await must(['cp', f.src, `${name}:${f.dest}`]);
       await must(['exec', '-i', name, 'sh', '-c', `umask 077; cat > ${spec.secret.path}`], { input: spec.secret.body });
