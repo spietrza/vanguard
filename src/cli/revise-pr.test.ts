@@ -38,6 +38,18 @@ function makeResult(committed = true): ReviseGithubPrResult {
 }
 
 describe('revisePrCommand', () => {
+  it('rejects fallback transport collisions before invoking the runner', async () => {
+    const revisePullRequest = vi.fn(async (): Promise<ReviseGithubPrResult> => makeResult());
+    await expect(revisePrCommand(makeCmd({ provider: 'claude', fallbackProvider: 'zai' }), { revisePullRequest })).rejects.toThrow(/transport/);
+    expect(revisePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('forwards the fallback provider and model to the runner', async () => {
+    const revisePullRequest = vi.fn(async (): Promise<ReviseGithubPrResult> => makeResult());
+    await revisePrCommand(makeCmd({ provider: 'claude', fallbackProvider: 'codex', fallbackModel: 'gpt-5' }), { revisePullRequest });
+    expect(revisePullRequest).toHaveBeenCalledWith('7', expect.objectContaining({ fallbackProvider: 'codex', fallbackModel: 'gpt-5' }));
+  });
+
   it('delegates to the revision runner and logs the done message on success', async () => {
     const logs: string[] = [];
     const revisePullRequest = vi.fn(

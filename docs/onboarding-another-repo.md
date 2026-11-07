@@ -193,6 +193,35 @@ Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, pl
 
 Inside a called workflow the `inputs` context means the `workflow_call` inputs, not your `workflow_dispatch` ones, so the caller passes the number in: `number: ${{ github.event.issue.number || inputs.issue }}` for research, `number: ${{ github.event.pull_request.number || inputs.pr }}` for revise. Revise runs at most 2 rounds.
 
+**Needs a human edit — `revise.yml` has no `fallback-provider`/`fallback-model` inputs yet.** `revise-pr` (the CLI `revise.yml` calls) now accepts `--fallback-provider`/`--fallback-model` and retries a rate-limited or otherwise-unavailable primary provider on the fallback inside the one CLI call — unlike the PR-review path, there is no separate preflight or shell-level retry to add. Vanguard cannot make this edit itself (`.github/workflows/**` is a hard constraint); apply it by hand to `revise.yml`:
+
+```yaml
+# workflow_call.inputs: add alongside `provider`
+      fallback-provider:
+        description: 'Provider to retry revision stages on when the primary one throws (outage, usage limit, rate limit, revoked credential). Empty = no fallback. Must be on a different transport than `provider`.'
+        type: string
+        default: ''
+      fallback-model:
+        description: 'Model for the fallback provider. Empty = its default.'
+        type: string
+        default: ''
+```
+
+and in the `Revise the PR from review comments` step, add the two inputs to its `env:` and forward them as flags:
+
+```yaml
+          IN_FALLBACK_PROVIDER: ${{ inputs.fallback-provider }}
+          IN_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+        run: |
+          ...
+          [ -n "$IN_FALLBACK_PROVIDER" ] && args+=(--fallback-provider "$IN_FALLBACK_PROVIDER")
+          [ -n "$IN_FALLBACK_MODEL" ] && args+=(--fallback-model "$IN_FALLBACK_MODEL")
+```
+
+Then set them on your `vanguard-revise.yml` caller the same way as `pr-review.yml`'s (e.g. `fallback-provider: claude`, `fallback-model: opus` behind a `codex` primary).
+
+**Separately, this repo's own `vanguard-pr-review.yml` caller already could set a fallback and doesn't.** `pr-review.yml` has accepted `fallback-provider`/`fallback-model` since before this change (see the example above) — no code or schema edit needed there, only a `with:` value. The Claude-subscription 429 that stalled #609 would have retried immediately on a fallback provider/model if one had been configured on that caller. This is a plain config value, not a workflow-structure change, but it still lives under `.github/workflows/` and so still needs a human to add it.
+
 The revise gate differs from the PR-review one: Vanguard's own PRs are authored by `github-actions[bot]`, so the **author** list must include it while the **sender** list stays human. A caller that copies the PR-review gate (`pull_request.user.login == 'YOUR_LOGIN'`) can never run:
 
 ```yaml

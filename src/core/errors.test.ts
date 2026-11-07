@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { failureReason, formatFailureComment, visibleError, VanguardError } from './errors.js';
+import { isRateLimitError, failureReason, formatFailureComment, visibleError, VanguardError } from './errors.js';
 
 describe('failureReason', () => {
   it('masks credentials and collapses the message to one line, since it lands in a public CI log', () => {
@@ -70,5 +70,14 @@ describe('visibleError', () => {
 
   it('wraps a foreign error with the first non-empty message line', () => {
     expect(visibleError(new Error('\n\ngh: not found\nusage: gh issue view')).message).toBe('gh: not found');
+  });
+});
+
+describe('isRateLimitError', () => {
+  it.each(['HTTP 429', 'status code 429', 'API Error: 429', '{"code":429}', '429 Too Many Requests', 'rate_limit_error', 'rate_limit_exceeded', 'Rate limit reached for gpt-5'])('recognizes %s', (message) => {
+    expect(isRateLimitError(new Error(message))).toBe(true);
+  });
+  it.each(['API rate limit exceeded for user alice', 'gh failed: API rate limit exceeded', 'line 429', 'implement rate limiting', 'invalid API key'])('rejects %s', (message) => {
+    expect(isRateLimitError(new Error(message))).toBe(false);
   });
 });

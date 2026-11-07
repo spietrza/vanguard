@@ -72,6 +72,13 @@ export type Command =
       egress: boolean;
       llmProxy?: boolean;
       provider?: ProviderName;
+      /**
+       * When set, every stage on the primary provider retries once on this provider after an
+       * AgentError (outage, usage limit, revoked credential, rate limit) — same contract as `run`/`watch`.
+       */
+      fallbackProvider?: ProviderName;
+      /** Model for every stage that fell back (default: that provider's default). */
+      fallbackModel?: string;
       reviewModel?: string;
       maxRounds?: number;
       /** Git author for the revision commits + white-label the revision marker (client repos carry no automation branding). */
@@ -846,6 +853,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
+      ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+      ...(fallbackModel !== undefined ? { fallbackModel } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(maxRounds !== undefined ? { maxRounds } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -1387,6 +1396,8 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --out <file>           Dry-run: write the diff + proposed thread replies to this file; push and comment NOTHING (review, then re-run without --out to apply)
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
+    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential, rate limit) — must sit on a different transport
+    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
     --review-model <m>     Model for the review stage
     --feedback-authors <a,b> Extra GitHub/GitLab logins whose PR feedback and <spec_manifest>/<tech_spec> comments are trusted, beyond OWNER/MEMBER/COLLABORATOR and the issue author (pass the workflow's allowed-actors here)
     --max-rounds <n>       Maximum revision rounds (default: 2)

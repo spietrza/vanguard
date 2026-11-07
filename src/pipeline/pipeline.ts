@@ -7,7 +7,7 @@ import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { diffForPrompt } from '../context/escape.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
-import { AgentError } from '../core/errors.js';
+import { AgentError, isRateLimitError } from '../core/errors.js';
 import { roundUsd } from '../core/usd.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
@@ -369,12 +369,15 @@ export async function runBudgetedStages(
         ...(resume && sessionId !== undefined ? { resumeSessionId: sessionId } : {}),
       });
     } catch (err) {
+      const rateLimited = err instanceof AgentError && isRateLimitError(err);
       if (err instanceof AgentError && stage.fallback !== undefined) {
         // No `reason` here: AgentError carries the CLI's raw stderr, and an auth failure may echo the
         // credential it was handed — the redactor knows common token shapes, not every vendor's.
         ctx.log.warn(
-          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name },
-          `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
+          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, rateLimited },
+          rateLimited
+            ? `${stage.name} provider rate-limited (429) — falling back to ${stage.fallback.provider.name}`
+            : `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
         );
         effectiveAgent = stage.fallback.provider;
         effectiveModel = stage.fallback.model;
@@ -387,6 +390,11 @@ export async function runBudgetedStages(
           ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
         });
       } else {
+        // No fallback to catch this one: at least name a rate limit for what it is before it
+        // propagates — the operator log line that follows (watch-prs / revise-pr) stays generic.
+        if (rateLimited) {
+          ctx.log.warn({ stage: stage.name, provider: agent.name }, `${stage.name} provider rate-limited (429) — no fallback configured`);
+        }
         throw err;
       }
     }
