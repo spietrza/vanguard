@@ -3,12 +3,20 @@ import type { AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './pro
 import { shellQuote, assistantText } from './shell.js';
 import { isSafeSessionId } from './session-store.js';
 
+interface StreamContentBlock {
+  type?: string;
+  text?: string;
+  thinking?: string;
+  name?: string;
+  input?: unknown;
+}
+
 interface StreamMessage {
   type?: string;
   subtype?: string;
   session_id?: string;
   model?: string;
-  message?: { content?: Array<{ type?: string; text?: string }>; model?: string };
+  message?: { content?: StreamContentBlock[]; model?: string };
   result?: string;
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
   total_cost_usd?: number;
@@ -16,6 +24,19 @@ interface StreamMessage {
 
 /** Model id the CLI stamps on messages it fabricates locally (API errors), never on real output. */
 const SYNTHETIC_MODEL = '<synthetic>';
+
+/** One assistant content block, rendered for the diagnostic log — never the full tool input, just enough to see what it was. */
+function summarizeBlock(block: StreamContentBlock): string {
+  if (block.type === 'text') return block.text ?? '';
+  if (block.type === 'thinking') return `[thinking] ${(block.thinking ?? '').slice(0, 200)}`;
+  if (block.type === 'tool_use') return `[tool_use:${block.name ?? '?'}] ${JSON.stringify(block.input ?? {}).slice(0, 200)}`;
+  return `[${block.type ?? 'unknown'}]`;
+}
+
+/** The last assistant message's content, whatever shape it took — the only evidence left when no text reached finalText. */
+function summarizeAssistantMessage(msg: StreamMessage): string {
+  return (msg.message?.content ?? []).map(summarizeBlock).join(' ').trim();
+}
 
 function toUsage(raw: StreamMessage['usage']): AgentUsage | undefined {
   if (raw === undefined) return undefined;
@@ -56,6 +77,8 @@ export async function* runClaudeCli(
   let parsedAny = false;
   let realTurns = 0;
   let droppedSessionId = false;
+  let lastBlock: string | undefined;
+  let stopReason: string | undefined;
 
   for (const line of res.stdout.split('\n')) {
     const trimmed = line.trim();
@@ -76,6 +99,10 @@ export async function* runClaudeCli(
     if (typeof msg.model === 'string') model = msg.model;
     else if (typeof msg.message?.model === 'string') model = msg.message.model;
     if (msg.type === 'assistant') {
+      // Captured for every assistant message, not just ones with text: when the run ends without any
+      // text block (all thinking/tool_use), this is the only evidence of what the tokens actually went to.
+      const summary = summarizeAssistantMessage(msg);
+      if (summary !== '') lastBlock = summary;
       const text = assistantText(msg);
       if (text !== '') {
         turns += 1;
@@ -91,6 +118,9 @@ export async function* runClaudeCli(
       if (typeof msg.result === 'string' && msg.result !== '') finalText = msg.result;
       usage = toUsage(msg.usage);
       if (typeof msg.total_cost_usd === 'number') costUsd = msg.total_cost_usd;
+      // The CLI's own classification of why the turn ended (e.g. 'success', 'error_max_turns',
+      // 'error_during_execution') — the terminal_reason/stop-reason callers need when finalText is empty.
+      if (typeof msg.subtype === 'string') stopReason = msg.subtype;
     }
   }
 
@@ -126,6 +156,9 @@ export async function* runClaudeCli(
   if (sessionId !== undefined) output.sessionId = sessionId;
   if (usage !== undefined) output.usage = usage;
   if (costUsd !== undefined) output.costUsd = costUsd;
+  if (stopReason !== undefined) output.stopReason = stopReason;
+  // Only worth keeping when the run ended with nothing in finalText: otherwise finalText already is the evidence.
+  if (finalText === '' && lastBlock !== undefined) output.lastBlock = lastBlock;
   if (model !== undefined) output.model = model;
   return output;
 }
