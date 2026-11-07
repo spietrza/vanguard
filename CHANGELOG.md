@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.13.0](https://github.com/spietrza/taskcell/compare/v1.12.0...v1.13.0) (2026-11-07)
+
+
+### Features
+
+* **desktop:** desktop: list_runs/read_run forward to core run-store over the sidecar pipe; delete the runs.rs reader (spietrza/taskcell[#511](https://github.com/spietrza/taskcell/issues/511)) ([#614](https://github.com/spietrza/taskcell/issues/614)) ([82fcea4](https://github.com/spietrza/taskcell/commit/82fcea465e48f55fbc76a8de3dfe2e75c1e2dae2))
+* **desktop:** review verdict as a run record; Task Board shows the pipeline stage and per-stage verdict chips (spietrza/taskcell[#512](https://github.com/spietrza/taskcell/issues/512)) ([#613](https://github.com/spietrza/taskcell/issues/613)) ([d0710f8](https://github.com/spietrza/taskcell/commit/d0710f82a70144ef65713a9bd3e3031cf8080e30))
+* Factory runs that hit a provider rate limit (429) stay stuck until someone re-labels the PR (spietrza/taskcell[#615](https://github.com/spietrza/taskcell/issues/615)) ([#639](https://github.com/spietrza/taskcell/issues/639)) ([50d7b7e](https://github.com/spietrza/taskcell/commit/50d7b7ef96298b03608322bcd9270e958c0d4757))
+* hub: always run with the LLM proxy (spietrza/vanguard[#584](https://github.com/spietrza/taskcell/issues/584)) ([#587](https://github.com/spietrza/taskcell/issues/587)) ([dde684b](https://github.com/spietrza/taskcell/commit/dde684b5065ccacf39d398f398c28c369cb1457b))
+* hub: Host allowlist and per-launch token (DNS rebinding) (spietrza/vanguard[#583](https://github.com/spietrza/taskcell/issues/583)) ([#588](https://github.com/spietrza/taskcell/issues/588)) ([a083269](https://github.com/spietrza/taskcell/commit/a0832699326d44b8d37d4ab4b688c70278248323))
+* hub: Host allowlist follow-ups (port-forward, --host, SSE wording, docs) (spietrza/vanguard[#591](https://github.com/spietrza/taskcell/issues/591)) ([#594](https://github.com/spietrza/taskcell/issues/594)) ([552830a](https://github.com/spietrza/taskcell/commit/552830aea99ed21448bd7035eac3612b029a086b))
+* hub: watch.test.ts T-72/T-73 fail on macOS (fs.watch timing), pass on Linux CI (spietrza/taskcell[#528](https://github.com/spietrza/taskcell/issues/528)) ([#612](https://github.com/spietrza/taskcell/issues/612)) ([0ee1f6a](https://github.com/spietrza/taskcell/commit/0ee1f6a51a4311419db0566180729139607de74b))
+* landing: remove the PR counter and fix spacing, scene labels and touch targets from the design review (spietrza/taskcell[#624](https://github.com/spietrza/taskcell/issues/624)) ([#626](https://github.com/spietrza/taskcell/issues/626)) ([b2ebb34](https://github.com/spietrza/taskcell/commit/b2ebb34c9d57de1b92a17e6d70d233e67d177962))
+* PR reviewer ends without a verdict despite spending tokens (spietrza/taskcell[#598](https://github.com/spietrza/taskcell/issues/598)) ([#609](https://github.com/spietrza/taskcell/issues/609)) ([2b28883](https://github.com/spietrza/taskcell/commit/2b288835968ebe4ccef112b500335fdfcc015b32))
+* **runners:** PR review worktree is cut from the PR's base branch, so reviewer instruction files (CLAUDE.md, AGENTS.md, skills/) come from that branch (spietrza/taskcell[#463](https://github.com/spietrza/taskcell/issues/463)) ([#610](https://github.com/spietrza/taskcell/issues/610)) ([666dec9](https://github.com/spietrza/taskcell/commit/666dec91615740b6f5ce1afb10e25703284d2252))
+* secret-scan: bearer rule flags prose like "bearer token" (spietrza/taskcell[#635](https://github.com/spietrza/taskcell/issues/635)) ([#637](https://github.com/spietrza/taskcell/issues/637)) ([e986fd0](https://github.com/spietrza/taskcell/commit/e986fd0cc5c110180ad19be79bf1d3e9690cf42c))
+* sidecar: LLM-proxy follow-ups (real credential test, docs scope, warning dedup) (spietrza/taskcell[#592](https://github.com/spietrza/taskcell/issues/592)) ([#611](https://github.com/spietrza/taskcell/issues/611)) ([8843eef](https://github.com/spietrza/taskcell/commit/8843eefc96e9030f9789260ad84feb54ca5941f8))
+* sidecar: LLM-proxy follow-ups (real credential test, docs scope, warning dedup) (spietrza/vanguard[#592](https://github.com/spietrza/taskcell/issues/592)) ([#593](https://github.com/spietrza/taskcell/issues/593)) ([c163f37](https://github.com/spietrza/taskcell/commit/c163f379878e318d2af29f282c3f4d2f057bdb31))
+* spike: can the Codex ChatGPT-plan credential stay on the host behind the LLM proxy (spietrza/taskcell[#625](https://github.com/spietrza/taskcell/issues/625)) ([#638](https://github.com/spietrza/taskcell/issues/638)) ([2df156a](https://github.com/spietrza/taskcell/commit/2df156a982921b0ffad1d9782a217e14403455c2))
+
+
+### Bug Fixes
+
+* argv spawn for desktop runs and chat origin allowlist ([#600](https://github.com/spietrza/taskcell/issues/600)) ([5fe4dea](https://github.com/spietrza/taskcell/commit/5fe4dea6ac61f1398e9f4b1bfa33fbb7f2298f5d))
+* harden hub endpoints ([#605](https://github.com/spietrza/taskcell/issues/605)) ([983029b](https://github.com/spietrza/taskcell/commit/983029b9ce50113956afe91e9b8595150ace68a4))
+* harden prompt context and trust checks ([#608](https://github.com/spietrza/taskcell/issues/608)) ([aa3adfc](https://github.com/spietrza/taskcell/commit/aa3adfcef6c6fc1da90e4643a1f293790182695e))
+* harden sandbox egress and delivery ([#607](https://github.com/spietrza/taskcell/issues/607)) ([62f76c1](https://github.com/spietrza/taskcell/commit/62f76c172ba5a4d95f5cc7d4044a40c1274030a5))
+* ignore worktree hooks in host git ([#596](https://github.com/spietrza/taskcell/issues/596)) ([39a3fe7](https://github.com/spietrza/taskcell/commit/39a3fe710269354af1586f6f8f9442876285a9d4))
+* pass hub token via launch url ([#597](https://github.com/spietrza/taskcell/issues/597)) ([40204e6](https://github.com/spietrza/taskcell/commit/40204e6b17e82aeef731a483b3ee09ab69c27a3e))
+* redact injected secrets on every publish path ([#602](https://github.com/spietrza/taskcell/issues/602)) ([2204948](https://github.com/spietrza/taskcell/commit/2204948e10fc5f06725e467a2487dcbe3b60a7b7))
+* tighten tracker comment trust and board scope ([#599](https://github.com/spietrza/taskcell/issues/599)) ([6b0383d](https://github.com/spietrza/taskcell/commit/6b0383d00558d29a3ef99331744224e80a75f9e8))
+* validate session ids and guard .vanguard paths ([#601](https://github.com/spietrza/taskcell/issues/601)) ([e94c778](https://github.com/spietrza/taskcell/commit/e94c7787aa23ce3c03696e85ff2e496c8a5873d8))
+
+
+### Documentation
+
+* add security policy ([#590](https://github.com/spietrza/taskcell/issues/590)) ([23c886f](https://github.com/spietrza/taskcell/commit/23c886fe7b5cf04873fc2f3980d8b1e985f7f21c))
+* product README and OWASP self-assessment ([#606](https://github.com/spietrza/taskcell/issues/606)) ([230d9f4](https://github.com/spietrza/taskcell/commit/230d9f4278e844cd41b838fdc2b39f682ae138de))
+* rename repo to spietrza/taskcell ([#595](https://github.com/spietrza/taskcell/issues/595)) ([504affe](https://github.com/spietrza/taskcell/commit/504affee1b941c9e378c97acaa2e8d949b0890f5))
+* self-hosted security review ([#582](https://github.com/spietrza/taskcell/issues/582)) ([408b751](https://github.com/spietrza/taskcell/commit/408b75191c59ec5c64fa01c8ecbf369b5dfbf57e))
+
 ## [1.12.0](https://github.com/spietrza/vanguard/compare/v1.11.0...v1.12.0) (2026-10-24)
 
 
