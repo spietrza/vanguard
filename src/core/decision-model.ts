@@ -4,6 +4,7 @@
  * questions in, a calibrated probability per allowed answer out, in ~100 ms, no text generation.
  * Used by the log-only difficulty probe, the eval judge and the fork scorer.
  */
+import { isIP } from 'node:net';
 
 /** clef over clef-flash: replaying 11 factory probes (2026-10-21) gave Brier 0.05 vs 0.16 — flash was overconfident. */
 export const DECISION_MODEL_DEFAULT = 'clef';
@@ -53,8 +54,11 @@ export function decisionModelConfig(
   const url = env['VANGUARD_DECISION_URL'];
   if (url !== undefined && url !== '') {
     const token = env['VANGUARD_DECISION_TOKEN'];
-    if (token !== undefined && isPlainHttpOffHost(url)) {
-      console.warn('vanguard: VANGUARD_DECISION_URL is plain http on a non-local host — the bearer token and the state travel unencrypted');
+    // Refused, not warned: the state (issue text, diff) and any bearer token would cross the network
+    // unencrypted. Loopback, private/Tailscale addresses and dotless LAN names stay allowed.
+    if (isPlainHttpOffHost(url)) {
+      console.warn(`vanguard: ${PLAIN_HTTP_REFUSED} — disabled`);
+      return undefined;
     }
     return { url, model, ...(token !== undefined ? { token } : {}) };
   }
@@ -72,13 +76,18 @@ export function decisionModelConfig(
   };
 }
 
-/** http:// to anything but loopback or RFC-1918/Tailscale-style private space. */
+const PLAIN_HTTP_REFUSED = 'VANGUARD_DECISION_URL is plain http on a non-local host; use https (the state and token would travel unencrypted)';
+
+/** http:// to anything but loopback, RFC-1918/Tailscale-style private space, or a dotless LAN name. */
 function isPlainHttpOffHost(url: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== 'http:') return false;
     const h = u.hostname;
-    return !(h === 'localhost' || h === '::1' || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h));
+    if (h === 'localhost' || h === '[::1]' || (!h.includes('.') && !h.startsWith('['))) return false;
+    // Private ranges only for an IP literal: a name like `10.attacker.com` resolves wherever its owner wants.
+    if (isIP(h) !== 4) return true;
+    return !(/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h));
   } catch {
     return false;
   }
@@ -87,6 +96,7 @@ function isPlainHttpOffHost(url: string): boolean {
 /** Why decisionModelConfig returned undefined for this model, worded for the operator. */
 export function decisionModelMissing(model: string, env: NodeJS.ProcessEnv = process.env): string {
   const url = env['VANGUARD_DECISION_URL'];
+  if (url !== undefined && url !== '' && isPlainHttpOffHost(url)) return `${PLAIN_HTTP_REFUSED}.`;
   const hasCloudflare = (env['CLOUDFLARE_ACCOUNT_ID'] ?? '') !== '' && (env['CLOUDFLARE_AUTH_TOKEN'] ?? '') !== '';
   if ((url === undefined || url === '') && hasCloudflare && !WORKERS_AI_MODELS.has(model)) {
     return `"${model}" is not hosted on Workers AI (clef, clef-flash are); point VANGUARD_DECISION_URL at an endpoint that serves it.`;

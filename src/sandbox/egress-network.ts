@@ -35,7 +35,9 @@ export interface EgressEnclave {
  * nowhere. PID-1 + restart means docker both records the output and revives the proxy.
  */
 export async function startEgressEnclave(
-  opts: { allowlist?: readonly string[]; image?: string; docker?: DockerRunner } = {},
+  /** `trusted`: exact allowlisted hosts (configured custom endpoints) exempt from the 443-only and
+   *  no-private-address rules, so a LAN or non-443 https endpoint keeps working. */
+  opts: { allowlist?: readonly string[]; trusted?: readonly string[]; image?: string; docker?: DockerRunner } = {},
 ): Promise<EgressEnclave> {
   const docker = opts.docker ?? defaultDocker;
   const allowlist = opts.allowlist ?? DEFAULT_EGRESS_ALLOWLIST;
@@ -56,7 +58,11 @@ export async function startEgressEnclave(
         // The shared logic must sit next to the server so its relative import resolves.
         { src: PROXY_LOGIC, dest: '/tmp/egress-allow.mjs' },
       ],
-      env: { ALLOW: allowlist.join(','), PORT: String(PROXY_PORT) },
+      env: {
+        ALLOW: allowlist.join(','),
+        ...(opts.trusted !== undefined && opts.trusted.length > 0 ? { TRUSTED: opts.trusted.join(',') } : {}),
+        PORT: String(PROXY_PORT),
+      },
       createArgs: ['--restart', 'on-failure:10'],
       cmd: ['node', '/tmp/egress-proxy.mjs'],
       alsoDestroy: async () => { await docker(['network', 'rm', network]); },

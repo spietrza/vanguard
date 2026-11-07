@@ -206,7 +206,7 @@ If you prefer an external scheduler instead of the in-stack service, `vanguard g
 | `--repo <path>` | cwd | Git repo to prune worktrees and reap branches in |
 | `--max-age-hours <n>` | 6 | Only reap resources older than n hours |
 | `--remote <owner/repo>` | none | Also delete merged remote `vanguard/*` branches (needs `gh`) |
-| `--abandoned` | off | Also delete branches whose PR is closed unmerged |
+| `--abandoned` | off | Also delete branches whose PR is closed unmerged (only when that PR's head is the branch's current tip and no open PR uses the branch) |
 | `--dry-run` | off | Report what would be reaped without removing anything |
 
 A cron line, for reference: `0 */4 * * * vanguard gc --remote owner/repo --repo /work/repo`. On Synology you would put this in Control Panel, Task Scheduler instead; the in-stack `vanguard-gc` service is simpler and is what this repo ships.

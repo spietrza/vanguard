@@ -67,9 +67,19 @@ function encodeBasicAuthToken(token: string): string {
   return Buffer.from(`x-access-token:${token}`).toString('base64');
 }
 
-/** Build the `git -c …` prefix that overrides the ambient credential for one push. */
-export function pushAuthConfigArgs(token: string, host = 'github.com'): string[] {
-  return ['-c', `http.https://${host}/.extraheader=AUTHORIZATION: basic ${encodeBasicAuthToken(token)}`];
+/**
+ * `GIT_CONFIG_*` env entries that override the ambient credential for one push. Env, not a `-c` argv
+ * pair, so the base64 credential is not visible in the host process list. Appended after any entries
+ * `base` already carries (same scheme as hostGitEnv).
+ */
+export function pushAuthEnv(token: string, host = 'github.com', base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const parsed = Number.parseInt(base['GIT_CONFIG_COUNT'] ?? '', 10);
+  const i = Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+  return {
+    GIT_CONFIG_COUNT: String(i + 1),
+    [`GIT_CONFIG_KEY_${i}`]: `http.https://${host}/.extraheader`,
+    [`GIT_CONFIG_VALUE_${i}`]: `AUTHORIZATION: basic ${encodeBasicAuthToken(token)}`,
+  };
 }
 
 /** Strip a leaked basic-auth credential (base64 of x-access-token:<PAT>) from an error message. */
@@ -82,13 +92,15 @@ function redactPushAuthError(err: unknown, token: string): Error {
 /**
  * Push the worktree's current HEAD to an existing remote branch (the PR head ref), updating
  * the PR in place. Unlike publishForReview, this never creates a new PR.
- * Runs: `git push <remote> HEAD:<prHeadRef>` in ctx.worktreePath.
+ * Runs: `git push <remote> HEAD:refs/heads/<prHeadRef>` in ctx.worktreePath.
  */
 export async function pushToExistingBranch(ctx: RunContext, opts: PushToExistingBranchOptions): Promise<void> {
   const run = opts.runner ?? defaultRunner;
-  const auth = opts.pushToken ? pushAuthConfigArgs(opts.pushToken, opts.host) : [];
+  // Fully qualified destination: an unqualified one could resolve to a same-named tag on the remote.
+  const args = ['push', '--no-verify', opts.remote ?? 'origin', `HEAD:refs/heads/${opts.prHeadRef}`];
   try {
-    await run('git', [...auth, 'push', '--no-verify', opts.remote ?? 'origin', `HEAD:${opts.prHeadRef}`], ctx.worktreePath);
+    if (opts.pushToken) await run('git', args, ctx.worktreePath, pushAuthEnv(opts.pushToken, opts.host));
+    else await run('git', args, ctx.worktreePath);
   } catch (err) {
     if (opts.pushToken) {
       throw redactPushAuthError(err, opts.pushToken);
@@ -229,7 +241,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   if (rebased && headSha === '') {
     ctx.log.warn({ branch: ctx.branch }, 'publish: rebased but could not resolve the branch head; the review marker will name the pre-rebase commit');
   }
-  await run('git', ['push', '--no-verify', '-u', remote, ctx.branch], ctx.worktreePath);
+  await run('git', ['push', '--no-verify', '-u', remote, `refs/heads/${ctx.branch}:refs/heads/${ctx.branch}`], ctx.worktreePath);
   const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths), rebased ? rebasedNote(remote, base) : undefined]
     .filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];

@@ -11,10 +11,61 @@ import {
   disposeContext,
   workflowPaths,
   assertNoWorkflowChanges,
+  copyBackBudget,
+  assertWorkspaceWithinCeiling,
 } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { skillRegistryForRun } from '../context/skill-registry.js';
-import { WorkflowGuardError } from './errors.js';
+import { SandboxError, WorkflowGuardError } from './errors.js';
+
+describe('assertWorkspaceWithinCeiling', () => {
+  const sandbox = (stdout: string, exitCode = 0): Pick<IsolatedSandboxProvider, 'exec'> & { commands: string[] } => {
+    const commands: string[] = [];
+    return { commands, exec: async (command: string) => { commands.push(command); return { exitCode, stdout, stderr: '' }; } };
+  };
+
+  it('measures inside the sandbox with node_modules and .git pruned, and passes under the ceiling', async () => {
+    const sb = sandbox('3 30\n');
+    await expect(assertWorkspaceWithinCeiling(sb, 100, 10)).resolves.toBeUndefined();
+    expect(sb.commands[0]).toContain('-name node_modules -o -name .git');
+  });
+
+  it('refuses before anything is copied when bytes or files pass the ceiling', async () => {
+    await expect(assertWorkspaceWithinCeiling(sandbox('3 101\n'), 100, 10)).rejects.toThrow(SandboxError);
+    await expect(assertWorkspaceWithinCeiling(sandbox('11 0\n'), 100, 10)).rejects.toThrow(/copy-back ceiling/);
+  });
+
+  it('skips (leaving the staging budget) when the measurement does not parse', async () => {
+    await expect(assertWorkspaceWithinCeiling(sandbox('find: unknown predicate', 0), 1, 1)).resolves.toBeUndefined();
+    await expect(assertWorkspaceWithinCeiling(sandbox('', 1), 1, 1)).resolves.toBeUndefined();
+  });
+});
+
+describe('copyBackBudget', () => {
+  const file = (size: number): { isDirectory: () => boolean; size: number } => ({ isDirectory: () => false, size });
+  const dir = { isDirectory: () => true, size: 1_000_000 };
+
+  it('passes up to the ceiling, ignoring directories', () => {
+    const charge = copyBackBudget(10, 2);
+    charge(dir);
+    charge(file(4));
+    expect(() => charge(file(6))).not.toThrow();
+  });
+
+  it('throws a clear SandboxError once total size passes the ceiling', () => {
+    const charge = copyBackBudget(10, 100);
+    charge(file(10));
+    expect(() => charge(file(1))).toThrow(SandboxError);
+    expect(() => copyBackBudget(10, 100)(file(11))).toThrow(/copy-back ceiling/);
+  });
+
+  it('throws once the file count passes the ceiling', () => {
+    const charge = copyBackBudget(1_000, 2);
+    charge(file(0));
+    charge(file(0));
+    expect(() => charge(file(0))).toThrow(/copy-back ceiling/);
+  });
+});
 import type { RunOptions } from './types.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';

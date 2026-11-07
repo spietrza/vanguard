@@ -26,10 +26,11 @@ describe('startSandboxContext extraEgressHosts (S6)', () => {
     expect(startEgressEnclave).toHaveBeenCalledWith({});
   });
 
-  it('plain --egress + extras materializes DEFAULT_EGRESS_ALLOWLIST + the custom hosts', async () => {
+  it('plain --egress + extras materializes DEFAULT_EGRESS_ALLOWLIST + the custom hosts, trusted for LAN/non-443', async () => {
     await startSandboxContext({ egress: true, llmProxy: false, extraEgressHosts: ['llm.example.com'] });
     expect(startEgressEnclave).toHaveBeenCalledWith({
       allowlist: [...DEFAULT_EGRESS_ALLOWLIST, 'llm.example.com'],
+      trusted: ['llm.example.com'],
     });
   });
 
@@ -42,6 +43,7 @@ describe('startSandboxContext extraEgressHosts (S6)', () => {
     });
     expect(startEgressEnclave).toHaveBeenCalledWith({
       allowlist: [...llmProxyEgressAllowlist(), 'llm.example.com'],
+      trusted: ['llm.example.com'],
     });
   });
 

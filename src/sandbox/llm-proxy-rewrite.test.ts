@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   mergeAnthropicBeta,
+  filterAnthropicBeta,
+  stripEgressTools,
   upstreamAuthHeaders,
   openaiAuthHeaders,
   isAllowedLlmPath,
@@ -22,6 +24,61 @@ describe('mergeAnthropicBeta', () => {
   it('coerces an array input to a comma-joined string', () => {
     expect(mergeAnthropicBeta(['foo', 'bar'], 'oauth-2025-04-20')).toBe('foo,bar,oauth-2025-04-20');
     expect(mergeAnthropicBeta(['oauth-2025-04-20'], 'oauth-2025-04-20')).toBe('oauth-2025-04-20');
+  });
+});
+
+describe('filterAnthropicBeta', () => {
+  it('keeps the betas Claude Code sends for normal runs', () => {
+    const cc = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24';
+    expect(filterAnthropicBeta(cc)).toBe(cc);
+  });
+  it('drops egress-capable families, including re-dated and mixed-case variants', () => {
+    expect(filterAnthropicBeta('mcp-client-2025-04-04,foo,web-fetch-2025-09-10,Files-API-2025-04-14,code-execution-2099-01-01')).toBe('foo');
+    expect(filterAnthropicBeta(['mcp-servers-2025-12-04', 'skills-2025-10-02'])).toBeUndefined();
+  });
+  it('prefix-matches families on whole segments: extended and undated variants are dropped', () => {
+    expect(filterAnthropicBeta('code-execution-web-tools-2026-01-01,mcp,skills-extra,web-fetch,foo')).toBe('foo');
+    // A different word that only starts with the same letters is not the family.
+    expect(filterAnthropicBeta('mcpx-2026-01-01,ccrypto')).toBe('mcpx-2026-01-01,ccrypto');
+  });
+  it('keeps every beta the current Claude Code release ships outside the blocked families', () => {
+    const cc = 'advanced-tool-use-2025-11-20,context-1m-2025-08-07,structured-outputs-2025-12-15,tool-search-tool-2025-10-19,web-search-2025-03-05,redact-thinking-2026-02-12';
+    expect(filterAnthropicBeta(cc)).toBe(cc);
+  });
+  it('blocked betas never reach the upstream in either auth mode', () => {
+    const req = { 'anthropic-beta': 'mcp-client-2025-04-04,foo' };
+    expect(upstreamAuthHeaders({ mode: 'subscription', secret: 'oat' }, req)['anthropic-beta']).toBe('foo,oauth-2025-04-20');
+    expect(upstreamAuthHeaders({ mode: 'api', secret: 'sk' }, req)['anthropic-beta']).toBe('foo');
+    expect('anthropic-beta' in upstreamAuthHeaders({ mode: 'api', secret: 'sk' }, { 'anthropic-beta': 'web-fetch-2025-09-10' })).toBe(false);
+  });
+});
+
+describe('stripEgressTools', () => {
+  const json = (b: Buffer): unknown => JSON.parse(b.toString('utf8'));
+  it('drops web_fetch / code_execution / mcp server tools and mcp_servers, keeps web_search and client tools', () => {
+    const body = Buffer.from(JSON.stringify({
+      model: 'm',
+      mcp_servers: [{ type: 'url', url: 'https://evil.example/mcp' }],
+      tools: [
+        { name: 'Bash', input_schema: {} },
+        { type: 'web_search_20250305', name: 'web_search' },
+        { type: 'web_fetch_20250910', name: 'web_fetch' },
+        { type: 'code_execution_20250825', name: 'code_execution' },
+        { type: 'mcp_toolset', mcp_server_name: 'x' },
+      ],
+    }));
+    expect(json(stripEgressTools(body))).toEqual({
+      model: 'm',
+      tools: [{ name: 'Bash', input_schema: {} }, { type: 'web_search_20250305', name: 'web_search' }],
+    });
+  });
+  it('returns the same buffer when nothing needs stripping or the body is not a JSON object', () => {
+    const plain = Buffer.from('{"model":"m","tools":[{"name":"Read"}]}');
+    expect(stripEgressTools(plain)).toBe(plain);
+    const junk = Buffer.from('not json');
+    expect(stripEgressTools(junk)).toBe(junk);
+    const arr = Buffer.from('[1]');
+    expect(stripEgressTools(arr)).toBe(arr);
   });
 });
 

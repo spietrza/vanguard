@@ -54,20 +54,36 @@ describe('otlpSinkConfig', () => {
     });
   });
 
+  it('ignores an inherited generic OTEL endpoint + auth header unless VANGUARD_OTEL=1 opts in', () => {
+    const inherited = { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer corp' };
+    expect(otlpSinkConfig(inherited)).toBeUndefined();
+    expect(otlpSinkConfig({ ...inherited, VANGUARD_OTEL: 'true' })).toBeUndefined();
+    expect(otlpSinkConfig({ ...inherited, VANGUARD_OTEL: '1' })).toEqual({ url: 'https://collector.example/v1/traces', headers: { Authorization: 'Bearer corp' } });
+  });
+
   it('never sends Langfuse keys to a generic OTEL endpoint, and never overrides an explicit Authorization', () => {
+    const optIn = { VANGUARD_OTEL: '1', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' };
     // A host-wide OTEL_EXPORTER_OTLP_ENDPOINT (e.g. Claude Code telemetry) must not receive the Langfuse pair.
-    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
+    expect(otlpSinkConfig({ ...optIn, OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example' })).toBeUndefined();
     // ...unless the path is Langfuse's — the path itself, not a substring anywhere in the URL.
-    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })?.headers).toHaveProperty('Authorization');
-    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel/v1/traces', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })?.headers).toHaveProperty('Authorization');
-    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://evil.example/?x=/api/public/otel', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
-    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://evil.example/api/public/otel.attacker/x', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
-    expect(otlpSinkConfig({ ...LANGFUSE, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer tok' })?.headers).toEqual({ Authorization: 'Bearer tok', 'x-langfuse-ingestion-version': '4' });
+    expect(otlpSinkConfig({ ...optIn, OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel' })?.headers).toHaveProperty('Authorization');
+    expect(otlpSinkConfig({ ...optIn, OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel/v1/traces' })?.headers).toHaveProperty('Authorization');
+    expect(otlpSinkConfig({ ...optIn, OTEL_EXPORTER_OTLP_ENDPOINT: 'https://evil.example/?x=/api/public/otel' })).toBeUndefined();
+    expect(otlpSinkConfig({ ...optIn, OTEL_EXPORTER_OTLP_ENDPOINT: 'https://evil.example/api/public/otel.attacker/x' })).toBeUndefined();
+    expect(otlpSinkConfig({ ...LANGFUSE, VANGUARD_OTEL: '1', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer tok' })?.headers).toEqual({ Authorization: 'Bearer tok', 'x-langfuse-ingestion-version': '4' });
+  });
+
+  it('never sends an inherited OTEL_EXPORTER_OTLP_HEADERS to VANGUARD_OTLP_ENDPOINT without VANGUARD_OTEL=1', () => {
+    expect(otlpSinkConfig({ VANGUARD_OTLP_ENDPOINT: 'https://x', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer corp' })).toBeUndefined();
+    // With Langfuse keys the export runs on those, not on the inherited credential.
+    expect(otlpSinkConfig({ ...LANGFUSE, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer corp' })?.headers['Authorization']).toMatch(/^Basic /);
+    expect(otlpSinkConfig({ VANGUARD_OTLP_ENDPOINT: 'https://x', VANGUARD_OTLP_HEADERS: 'Authorization=Bearer own' })?.headers).toEqual({ Authorization: 'Bearer own' });
   });
 
   it('accepts the OTel k=v header list, prefers VANGUARD_* over OTEL_*, and keeps an explicit /v1/traces', () => {
     expect(
       otlpSinkConfig({
+        VANGUARD_OTEL: '1',
         OTEL_EXPORTER_OTLP_ENDPOINT: 'https://other/',
         VANGUARD_OTLP_ENDPOINT: 'https://lf.example/api/public/otel/v1/traces',
         OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Basic%20abc, x-langfuse-ingestion-version=4',
