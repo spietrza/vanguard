@@ -154,8 +154,8 @@ function makeFeedbackJsonWithRevisions(): string {
   return makeFeedbackJson({
     comments: {
       nodes: [
-        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-09T00:00:00Z' },
-        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-09T00:00:01Z' },
+        { author: { login: 'github-actions' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-09T00:00:00Z' },
+        { author: { login: 'github-actions' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-09T00:00:01Z' },
       ],
     },
   });

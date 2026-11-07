@@ -233,3 +233,45 @@ describe('fetchRemoteRun', () => {
     expect(gitignore).toBe('*\n');
   });
 });
+
+describe('fetchRemoteRun — committed symlinks under .vanguard', () => {
+  const exec: Exec = async (file, args) => {
+    if (file === 'gh' && args[0] === 'run' && args[1] === 'download') {
+      const taskDir = join(downloadDirOf(args), 't1');
+      await mkdir(taskDir, { recursive: true });
+      await writeFile(join(taskDir, '2026-01-01T00-00-00-000Z.json'), runRecordJson('t1', '2026-01-01T00:00:00.000Z'));
+      return { stdout: '', stderr: '' };
+    }
+    throw new Error(`unexpected exec call: ${file} ${args.join(' ')}`);
+  };
+  let outside: string;
+  beforeEach(async () => {
+    outside = await mkdtemp(join(tmpdir(), 'vanguard-hub-remote-outside-'));
+    await mkdir(join(outside, '123'));
+    await writeFile(join(outside, '123', 'keep.txt'), 'keep');
+  });
+  afterEach(async () => {
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it('refuses a symlinked .vanguard/remote-runs and deletes nothing behind it', async () => {
+    await mkdir(join(repo, '.vanguard'));
+    await symlink(outside, join(repo, '.vanguard', 'remote-runs'));
+    await expect(fetchRemoteRun(repo, 123, exec)).rejects.toThrow(/symlink/);
+    expect(await readFile(join(outside, '123', 'keep.txt'), 'utf8')).toBe('keep');
+    await expect(access(join(outside, '.gitignore'))).rejects.toThrow();
+  });
+
+  it('refuses a symlinked .vanguard', async () => {
+    await symlink(outside, join(repo, '.vanguard'));
+    await expect(fetchRemoteRun(repo, 123, exec)).rejects.toThrow(/symlink/);
+    expect(await readFile(join(outside, '123', 'keep.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('refuses a symlinked <runId> leaf', async () => {
+    await mkdir(join(repo, '.vanguard', 'remote-runs'), { recursive: true });
+    await symlink(join(outside, '123'), join(repo, '.vanguard', 'remote-runs', '123'));
+    await expect(fetchRemoteRun(repo, 123, exec)).rejects.toThrow(/symlink/);
+    expect(await readFile(join(outside, '123', 'keep.txt'), 'utf8')).toBe('keep');
+  });
+});

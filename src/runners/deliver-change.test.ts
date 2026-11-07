@@ -75,6 +75,44 @@ describe('deliverChange', () => {
     expect(calls).toEqual([]);
   });
 
+  describe('a file the worktree .gitattributes renders as binary', () => {
+    const credential = 'opaque-credential-92837';
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it.each([
+      ['no attributes (control)', undefined],
+      ['`-diff`', 'config.ts -diff\n'],
+      ['a `binary` glob', '*.ts binary\n'],
+      ['textconv to nothing', '*.ts diff=hide\n'],
+    ])('blocks an injected credential on a later line: %s', async (_label, attributes) => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.stubEnv('OPENAI_API_KEY', credential);
+      const calls: string[][] = [];
+      try {
+        await withWork('work', async (ctx) => {
+          if (attributes !== undefined) await writeFile(join(ctx.worktreePath, '.gitattributes'), attributes);
+          await execa('git', ['config', 'diff.hide.textconv', 'true'], { cwd: ctx.worktreePath });
+          await writeFile(join(ctx.worktreePath, 'config.ts'), `// config\nexport const k = "${credential}";\n`);
+          // The plain rendering really does hide it under an attribute: the gate must not rely on it.
+          if (attributes !== undefined) expect(await ctx.wm.diff(ctx.worktreePath)).not.toContain(credential);
+          const r = await deliverChange(ctx, {
+            taskId: 'T-1',
+            commitMessage: 'feat: x',
+            target: { kind: 'existing-branch', prHeadRef: 'pr-head', runner: async (_f, a) => { calls.push(a); return ''; } },
+          });
+          expect(r.kind).toBe('secret-blocked');
+          if (r.kind !== 'secret-blocked' || r.block.reason !== 'findings') throw new Error('expected a findings block');
+          expect(r.block.injected).toEqual([{ file: 'config.ts', line: 2 }]);
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(calls).toEqual([]);
+    });
+  });
+
   it('reports no-changes when the worktree is clean and pushes nothing', async () => {
     const calls: string[][] = [];
     await withWork(undefined, async (ctx) => {

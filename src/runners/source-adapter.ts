@@ -475,7 +475,7 @@ export async function runSourcedIssue(
       // One RunWriter for the whole run: it owns the timestamp, so proof.json, visual-proof.json and
       // every stage record share one prefix and the hub/desktop readers can match a run's proof to
       // its stage records by name.
-      const writer = beginRun(deps.repoPath, adapter.taskId(task));
+      const writer = beginRun(deps.repoPath, adapter.taskId(task), undefined, { secretEnvVars: providerKeyEnvNames(deps) });
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),

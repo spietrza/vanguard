@@ -21,6 +21,7 @@ import {
 } from './review-prompt.js';
 import type { ReviewRisk, ReviewVerdict } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
+import { redactForPublish } from '../core/secret-scan.js';
 
 export interface PullRequestReviewTarget {
   repoSlug: string;
@@ -312,7 +313,7 @@ export async function commentPullRequest(
   body: string,
   gh: GhRunner = defaultGhRunner,
 ): Promise<void> {
-  await gh(['pr', 'comment', String(target.number), '--repo', target.repoSlug, '--body', body]);
+  await gh(['pr', 'comment', String(target.number), '--repo', target.repoSlug, '--body', redactForPublish(body)]);
 }
 
 /** Post a Vanguard review verdict to a PR via `gh pr review`. Reused by review-pr and the main agent loop. */
@@ -323,7 +324,7 @@ export async function postPullRequestReview(
   gh: GhRunner = defaultGhRunner,
 ): Promise<void> {
   const flag = action === 'request-changes' ? '--request-changes' : action === 'approve' ? '--approve' : '--comment';
-  await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, flag, '--body', commentBody]);
+  await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, flag, '--body', redactForPublish(commentBody)]);
 }
 
 /**

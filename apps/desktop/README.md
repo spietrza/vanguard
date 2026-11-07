@@ -127,7 +127,7 @@ shapes (kept decoupled from Vanguard's build, per the design spec §4).
 | `active.rs` | Detect in-flight runs (fresh sessions); parse a session into a transcript + token totals |
 | `projects.rs` | Persist the project list (OS app-config dir); aggregate per-project metrics + velocity |
 | `watch.rs` | `notify` watcher per project → debounced `vanguard:changed` events |
-| `spawn.rs` | Launch/kill runs (`sh -c` in the project dir, inherits env); stream output events |
+| `spawn.rs` | Launch/kill runs (argv, no shell, in the project dir, inherits env); stream output events |
 | `spec.rs` | Best-effort fetch of a Task's source issue (`gh`/`linear`) |
 | `remote.rs` | List GitHub Actions runs (`gh run list`); pull a run's record artifact into the local cache |
 
@@ -146,8 +146,11 @@ shapes (kept decoupled from Vanguard's build, per the design spec §4).
   credentials that covers, which don't, and what a failed proxy sidecar looks like. **Launch** below is
   a different path and is not covered: it is an ordinary CLI invocation, so the CLI's own opt-in
   `--llm-proxy` (off by default) applies instead.
-- **Launch command** is operator-supplied (a local run launcher, like a terminal) — spawned via `sh -c`
-  in the project dir. Not untrusted input.
+- **Launch command**: the Fleet watch loop is built from `.vanguard/app.json` (repo content), so its
+  `provider`/`source` must be plain names (built-in or custom provider) and the argv is spawned in the project dir **without a shell**.
+- **Doc chat `chatBaseUrl`** (also from `app.json`) only receives the inherited Anthropic credential when
+  it is `https://api.anthropic.com` or an origin listed in `VANGUARD_CHAT_ALLOWED_ORIGINS`
+  (comma-separated, set in the environment the app is launched from).
 - **Spec / remote** fetches require an authed `gh` / `linear` on `PATH`; they fail gracefully otherwise.
 
 ## Remaining / to harden
