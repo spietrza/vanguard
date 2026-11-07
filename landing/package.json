@@ -1,0 +1,11 @@
+{
+  "name": "taskcell-landing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node build.mjs && python3 -m http.server 4173 -d dist",
+    "dev": "node build.mjs && pnpm dlx wrangler@4 dev",
+    "deploy": "node build.mjs && pnpm dlx wrangler@4 deploy"
+  }
+}

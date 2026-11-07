@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taskcell: a self-hosted software factory</title>
+<meta name="description" content="Taskcell turns issues into pull requests on your own machine. Every card is built in a sealed Docker cell, has to pass your gates and a review, and lands as a PR. You merge. Open source, MIT.">
+<link rel="canonical" href="https://taskcell.dev/">
+<meta name="theme-color" content="#0d1013">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Taskcell">
+<meta property="og:url" content="https://taskcell.dev/">
+<meta property="og:title" content="Taskcell: cards in, PRs out">
+<meta property="og:description" content="A self-hosted software factory. Every card is built in a sealed Docker cell, passes your gates and a review, and lands as a pull request. You merge.">
+<meta property="og:image" content="https://taskcell.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Taskcell logo and the line Cards in, PRs out, next to an isometric factory floor with sandbox cells, gates and a pull-request dock.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/schibsted-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/atkinson-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/site.css">
+<script type="module" src="/site.js"></script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Taskcell","url":"https://taskcell.dev/","description":"A self-hosted software factory: issues in, reviewed pull requests out, each built in a sealed Docker sandbox.","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","license":"https://opensource.org/licenses/MIT","sameAs":"https://github.com/spietrza/taskcell"}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar">
+  <a class="brand" href="/" aria-label="Taskcell home"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path class="wall" d="M2 2h28v16h-4V6H6v20h20v-4h4v8H2z"/><rect class="card" x="12" y="12" width="8" height="8"/></svg>Taskcell</a>
+  <nav class="links" aria-label="Main">
+    <a href="#how">How it works</a>
+    <a href="#security">Security</a>
+    <a href="#self-host">Self-host</a>
+    <a href="#faq">FAQ</a>
+    <a class="btn small" href="https://github.com/spietrza/taskcell">Get it on GitHub</a>
+  </nav>
+</header>
+
+<main id="main">
+<section class="hero wrap" aria-label="Introduction">
+  <div class="hero-copy">
+    <h1><span class="dim">Cards in.</span> <span>PRs <em>out.</em></span></h1>
+    <p class="lede">Taskcell is a self-hosted software factory. Every card is built in its own sealed sandbox cell, has to pass your gates and a review, and lands as a pull request. You merge.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/spietrza/taskcell">Get it on GitHub</a>
+      <small>Open source, MIT. Your machine, your AI plan.</small>
+    </div>
+    <ul class="chips" aria-label="What it runs on">
+      <li class="chip">Self-hosted</li>
+      <li class="chip">Claude Code · Codex · Cursor</li>
+      <li class="chip">GitHub · GitLab · Linear</li>
+      <li class="chip soon">Desktop app · coming</li>
+    </ul>
+  </div>
+
+  <div class="floor floor-hero" id="floor-hero">
+    <img class="poster" src="/img/floor-1600.jpg" srcset="/img/floor-800.jpg 800w, /img/floor-1600.jpg 1600w" sizes="(max-width: 900px) 100vw, 58vw" width="1600" height="1100" alt="An isometric factory floor: an intake dock, four glass sandbox cells with cards inside, gates labelled tests, types, secrets and spec, a review tower and an outbound dock stacked with pull requests." fetchpriority="high">
+    <div class="stage"></div>
+    <button class="btn play" id="play" type="button" hidden>Start the factory</button>
+    <p class="floor-note">Swap the source: GitHub, GitLab, Linear or a GitHub Projects board. Swap the engine: Claude Code, Codex, Cursor or a model through OpenRouter. The line stays the same.</p>
+    <p class="follow" id="follow" hidden aria-live="polite"><span></span><button type="button">Stop following</button></p>
+  </div>
+</section>
+
+<!-- ponytail: count is hand-updated at build time; the link is the live source of truth. -->
+<aside class="proof" id="proof" aria-label="Built with itself">
+  <p class="proof-row wrap">
+    <span class="proof-mark" aria-hidden="true"></span>
+    <span><b>49</b> pull requests in this repo were built by Taskcell itself</span>
+    <span class="proof-dim">since July 2026</span>
+    <a href="https://github.com/spietrza/taskcell/pulls?q=is%3Apr+is%3Amerged+head%3Achore%2Fvanguard-gh">See them <span aria-hidden="true">→</span></a>
+  </p>
+</aside>
+
+<section class="section wrap" id="how" aria-labelledby="how-h">
+  <div class="head">
+    <p class="eyebrow" data-reveal>How it works</p>
+    <h2 id="how-h" data-reveal class="d1">From card to pull request</h2>
+  </div>
+  <p class="intro d2" data-reveal>Six stations, the same for every card. You set the trigger and you merge; Taskcell does the toil in between.</p>
+  <ol class="steps">
+    <li data-reveal class="d1"><b>Card</b><p>Label an issue on GitHub, GitLab or Linear, or move a card on a GitHub Projects board. A card too vague to build goes back as <em>needs info</em> before any model runs.</p></li>
+    <li data-reveal class="d2"><b>Spec</b><p>A planner reads the code and writes a tech spec with acceptance criteria. It is posted on the issue, and you get a window to read it before the build starts.</p></li>
+    <li data-reveal class="d3"><b>Sealed cell</b><p>The agent builds the card in a Docker container of its own: non-root, no new privileges, a minimal capability set, no repository token, one git worktree per card.</p></li>
+    <li data-reveal class="d1"><b>Gates</b><p>Your verify script runs and the host scans the diff for secrets. A red gate sends the card back for a repair, at most twice; the second can run on a stronger model.</p></li>
+    <li data-reveal class="d2"><b>Review</b><p>A reviewer reads the diff in a fresh context and fixes what it finds. Give it a second model, for example Codex reviewing Claude's work.</p></li>
+    <li data-reveal class="d3"><b>Pull request</b><p>The host pushes the branch and opens the PR: ready for review when every gate passed, a draft when one did not. On GitHub, your review comments go back for a revision. You merge.</p></li>
+  </ol>
+</section>
+
+<section class="section wrap" id="modules" aria-labelledby="mod-h">
+  <div class="head">
+    <p class="eyebrow" data-reveal>Swappable parts</p>
+    <h2 id="mod-h" data-reveal class="d1">Bring your tracker. Bring your model.</h2>
+  </div>
+  <p class="intro d2" data-reveal>The source and the engine are plug-in parts on the line. Change either one with a flag; the cell, the gates and the review stay the same.</p>
+  <div class="swap">
+    <div data-reveal class="d1">
+      <h3>Source</h3>
+      <p>Where cards come from.</p>
+      <ul>
+        <li><b>GitHub Issues</b><code>--github owner/repo#n</code><span>Pull requests on GitHub, with revisions from your review comments.</span></li>
+        <li><b>GitHub Projects</b><code>--source project</code><span>Moving a card to Todo starts the build.</span></li>
+        <li><b>GitLab</b><code>--source gitlab</code><span>gitlab.com or self-hosted, through <code>glab</code>. Merge requests instead of PRs.</span></li>
+        <li><b>Linear</b><code>--linear TES-1</code><span>Through the <code>linear</code> CLI. A workflow state is the trigger.</span></li>
+      </ul>
+    </div>
+    <div data-reveal class="d2">
+      <h3>Engine</h3>
+      <p>Who writes the code, on the plan or keys you already have.</p>
+      <ul>
+        <li><b>Claude Code</b><code>--provider claude</code><span>The default. A Claude subscription token or an API key.</span></li>
+        <li><b>Codex</b><code>--provider codex</code><span>An OpenAI API key, or a ChatGPT plan.</span></li>
+        <li><b>Cursor</b><code>--provider cursor</code><span>The Cursor CLI, added to the sandbox image on request.</span></li>
+        <li><b>OpenRouter, z.ai</b><code>--provider openrouter</code><span>Other models through Anthropic-compatible endpoints.</span></li>
+      </ul>
+    </div>
+    <div class="swap-cmd d3" data-reveal>
+      <p class="cmd-label">Claude builds, Codex reviews</p>
+<pre class="cmd"><code>vanguard run --github you/app#42 --repo ../app --provider claude --review-provider codex</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="section wrap" id="security" aria-labelledby="sec-h">
+  <div class="head">
+    <p class="eyebrow" data-reveal>Security</p>
+    <h2 id="sec-h" data-reveal class="d1">The agent is treated as hostile</h2>
+  </div>
+  <p class="intro d2" data-reveal>It reads text anyone can write: issues, repository files, dependencies. So it works inside a cell, and everything that can do damage stays outside.</p>
+  <div class="boundary d2" data-reveal>
+    <div class="host">
+      <div>
+        <h3>The host</h3>
+        <p>Your machine or server. Only it holds what can do damage.</p>
+        <ul>
+          <li>The GitHub or GitLab token</li>
+          <li>The real model key, inside the LLM proxy</li>
+          <li>The secret scan of every diff</li>
+          <li>Dropping edits to CI config</li>
+          <li>Pushing the branch and opening the PR</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <h3>The cell</h3>
+        <p>One container per card.</p>
+        <ul>
+          <li>Non-root, no new privileges, minimal capabilities</li>
+          <li>No repository token</li>
+          <li>A one-run nonce instead of your model key</li>
+          <li>Secrets in RAM, never in argv or on disk</li>
+        </ul>
+      </div>
+    </div>
+    <div class="out">
+      <h3>Out of the cell</h3>
+      <ul>
+        <li><span>registry.npmjs.org</span><span class="ok">allowed</span></li>
+        <li><span>pypi.org</span><span class="ok">allowed</span></li>
+        <li><span>github.com</span><span class="ok">allowed, no token</span></li>
+        <li><span>api.anthropic.com</span><span class="ok">via the proxy</span></li>
+        <li><span>anything else</span><span class="no">refused</span></li>
+      </ul>
+      <p>With the egress allowlist on. Without it, the cell's network is open.</p>
+    </div>
+  </div>
+
+  <ul class="controls">
+    <li data-reveal class="d1">
+      <h3>A sealed cell per card</h3>
+      <p>A Docker container, non-root, with no-new-privileges and every capability dropped except the three it needs to own files (CHOWN, FOWNER, DAC_OVERRIDE). No GitHub or GitLab token inside. Secrets arrive as an in-RAM file, never in argv or <code>docker inspect</code>.</p>
+      <p class="scope">On a Linear task the cell gets the Linear key, to read the issue.</p>
+    </li>
+    <li data-reveal class="d2">
+      <h3>The key stays out</h3>
+      <p>The LLM proxy, a sidecar on the host, holds the real model key. The agent gets a nonce that is useless after the run.</p>
+      <p class="scope">CLI: <code>--llm-proxy</code>, for Claude, Codex on an API key, z.ai and OpenRouter. The Hub always uses it for those. Codex on a ChatGPT plan, Cursor and Meridian still put their key in the cell, and the Hub warns you.</p>
+    </li>
+    <li data-reveal class="d3">
+      <h3>An egress allowlist</h3>
+      <p>The cell sits on an internal Docker network whose only way out is a proxy that tunnels allowlisted hosts. A process that ignores the proxy settings has no route out.</p>
+      <p class="scope"><code>--egress</code>, and implied by <code>--llm-proxy</code>.</p>
+    </li>
+    <li data-reveal class="d1">
+      <h3>A secret scan before every push</h3>
+      <p>The host scans the diff before anything leaves. A hit pushes nothing.</p>
+    </li>
+    <li data-reveal class="d2">
+      <h3>CI config never ships</h3>
+      <p>Agent edits to <code>.github/workflows</code>, <code>.github/actions</code>, <code>.gitlab-ci.yml</code> and <code>.gitlab/</code> YAML are dropped on the way out of the cell, and the PR lists them under Not included.</p>
+    </li>
+    <li data-reveal class="d3">
+      <h3>A Hub that answers only to you</h3>
+      <p>It binds to 127.0.0.1 by default, rejects unknown Host headers against DNS rebinding and needs a token minted at each launch.</p>
+      <p class="scope">It has no login yet: on a server, put it behind Tailscale or an authenticating proxy.</p>
+    </li>
+    <li data-reveal class="d1">
+      <h3>Only trusted comments steer it</h3>
+      <p>A comment counts as an instruction only when it comes from a repository member, the issue author or a login you list. Everyone else's text is ignored, and the CI watchers skip issues and PRs opened by outsiders.</p>
+      <p class="scope"><code>--feedback-authors</code> adds logins. From 1.13.0.</p>
+    </li>
+    <li data-reveal class="d2">
+      <h3>Pinned images and tools</h3>
+      <p>The sandbox, runner and Hub images are pinned by digest, the bundled CLIs by exact version and the Cursor download by checksum. <code>.dockerignore</code> keeps <code>.env</code> files out of image layers.</p>
+      <p class="scope">From 1.13.0.</p>
+    </li>
+    <li data-reveal class="d3">
+      <h3>Host git without repo hooks</h3>
+      <p>When the host commits and pushes the agent's work, git runs with the repository's hooks switched off, so a hook planted in the change cannot run on your machine.</p>
+      <p class="scope">From 1.13.0.</p>
+    </li>
+  </ul>
+
+  <div class="report" data-reveal>
+    <p>No third-party audit yet. The boundaries are written down in the README, in a self-hosted security review and in a control-by-control mapping to the OWASP Top 10 for agentic and LLM applications. Found a hole? Report it privately; you get an answer within 7 days.</p>
+    <div class="links-row">
+      <a href="https://github.com/spietrza/taskcell/security/advisories/new">Report a vulnerability</a>
+      <a href="https://github.com/spietrza/taskcell/blob/main/SECURITY.md">Security policy</a>
+      <a href="https://github.com/spietrza/taskcell#security">Security model</a>
+      <a href="https://github.com/spietrza/taskcell/blob/main/docs/security/owasp-mapping.md">OWASP mapping</a>
+    </div>
+  </div>
+</section>
+
+<section class="section wrap" id="self-host" aria-labelledby="self-h">
+  <div class="head">
+    <p class="eyebrow" data-reveal>Self-host</p>
+    <h2 id="self-h" data-reveal class="d1">Your machine. Your plan.</h2>
+  </div>
+  <p class="intro d2" data-reveal>Taskcell runs where Node 24 and Docker run: a laptop, a home server, a VPS. It uses the AI subscription or API keys you already pay for.</p>
+
+  <div class="install" data-reveal>
+    <p class="cmd-label">Install from source</p>
+<pre class="cmd"><code>git clone https://github.com/spietrza/taskcell.git
+cd taskcell
+pnpm install &amp;&amp; pnpm build
+docker/build.sh       <span class="c"># the sandbox image</span>
+pnpm link --global    <span class="c"># puts vanguard on your PATH</span></code></pre>
+    <p>Also needed: <code>gh</code> for GitHub, <code>glab</code> for GitLab or the <code>linear</code> CLI for Linear.</p>
+  </div>
+  <aside class="rename d1" data-reveal aria-label="About the command name">
+    <b>Why the command says vanguard</b>
+    Taskcell used to be called Vanguard. The CLI keeps its pre-rename name, <code>vanguard</code>, for now, and so do the <code>VANGUARD_*</code> variables, the <code>vanguard:*</code> labels and the <code>.vanguard/</code> folder.
+  </aside>
+
+  <ul class="ways">
+    <li data-reveal class="d1">
+      <h3>One card from the CLI</h3>
+      <p>Run a single issue end to end, with the key held by the LLM proxy.</p>
+<pre class="cmd"><code><span class="c"># token from: claude setup-token</span>
+export CLAUDE_CODE_OAUTH_TOKEN=…
+vanguard run --github you/app#42 \
+  --repo ../app --llm-proxy</code></pre>
+      <p class="note">Or <code>vanguard watch</code> to keep picking up labelled issues on its own.</p>
+    </li>
+    <li data-reveal class="d2">
+      <h3>The Hub on your machine</h3>
+      <p>Projects, the task board with New Run, the fleet, and every run's record, in a browser.</p>
+<pre class="cmd"><code>pnpm build:ui
+vanguard hub --repo ../app
+<span class="c"># http://127.0.0.1:7777</span></code></pre>
+    </li>
+    <li data-reveal class="d3">
+      <h3>The Hub on a server</h3>
+      <p>A Docker image for a VPS or a home server, Coolify or plain Compose.</p>
+<pre class="cmd"><code>docker build -f docker/hub.Dockerfile \
+  -t vanguard-hub .</code></pre>
+      <p class="note">Behind Tailscale or an authenticating proxy, never a published port. Mounting the Docker socket gives the Hub root on that host.</p>
+    </li>
+  </ul>
+
+  <ul class="coming" aria-label="Coming">
+    <li data-reveal class="d1"><b>Desktop app</b>The Hub as a native app, starting with macOS.</li>
+    <li data-reveal class="d2"><b>Mobile app</b>Connects to your own instance.</li>
+    <li data-reveal class="d3"><b>Managed hosting</b>Later, for teams that want it run for them.</li>
+  </ul>
+</section>
+
+<section class="section wrap" id="hub" aria-labelledby="hub-h">
+  <div class="head">
+    <p class="eyebrow" data-reveal>The Hub</p>
+    <h2 id="hub-h" data-reveal class="d1">Your factory, on one screen</h2>
+  </div>
+  <p class="intro d2" data-reveal><code>vanguard hub</code> shows your projects, the task board and the cost of every run. The live factory floor is coming to it; this is how it will look.</p>
+  <p class="preview-note d2" data-reveal>Preview with sample data. Projects, the board and cost per run are in the Hub today; the floor panel is not yet.</p>
+
+  <div class="hub d2" data-reveal>
+    <div class="hub-top"><b>Taskcell Hub</b><span class="tag">Preview, sample data</span></div>
+    <div class="hub-grid">
+      <div class="pane">
+        <h3>Factory floor <span>acme/billing</span></h3>
+        <div class="floor floor-panel compact" id="floor-panel">
+          <img class="poster" src="/img/floor-800.jpg" srcset="/img/floor-800.jpg 800w, /img/floor-1600.jpg 1600w" sizes="(max-width: 900px) 100vw, 55vw" width="1600" height="1100" alt="The same factory floor, as a panel in the Hub." loading="lazy">
+          <div class="stage"></div>
+        </div>
+      </div>
+      <div class="side">
+        <div class="pane">
+          <h3>Projects <span>this week</span></h3>
+          <div class="projects">
+            <div class="project"><b>acme/billing</b><span class="cost">$9.84</span><span class="meta">GitHub · 3 running · 12 runs</span><span class="meta cost">spend</span></div>
+            <div class="project"><b>acme/infra</b><span class="cost">$3.10</span><span class="meta">GitLab, self-hosted · 1 running · 4 runs</span><span class="meta cost">spend</span></div>
+            <div class="project"><b>acme/web</b><span class="cost">$0.00</span><span class="meta">GitHub · idle</span><span class="meta cost">spend</span></div>
+          </div>
+        </div>
+        <div class="pane">
+          <h3>Cost per run <span>last five</span></h3>
+          <table class="runs">
+            <thead><tr><th scope="col">Card</th><th scope="col">Models</th><th scope="col" class="r">Cache</th><th scope="col" class="r">Cost</th></tr></thead>
+            <tbody>
+              <tr><td>TC-44</td><td>Claude, Codex review</td><td class="r">97%</td><td class="r">$0.84</td></tr>
+              <tr><td>TC-45</td><td>Claude, Codex review</td><td class="r">98%</td><td class="r">$0.61</td></tr>
+              <tr><td>TC-43</td><td>Claude, 1 repair</td><td class="r">96%</td><td class="r">$1.27</td></tr>
+              <tr><td>TC-42</td><td>Codex, Claude review</td><td class="r">95%</td><td class="r">$0.93</td></tr>
+              <tr><td>TC-41</td><td>Claude, Codex review</td><td class="r">98%</td><td class="r">$0.58</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pane board">
+        <h3>Task board <span>acme/billing</span></h3>
+        <div class="cols">
+          <div class="col"><h4>Todo</h4><ul>
+            <li><span class="id">TC-52</span>Rate-limit the export endpoint</li>
+            <li><span class="id">TC-53</span>Dark mode for settings</li>
+          </ul></div>
+          <div class="col"><h4>Spec</h4><ul>
+            <li><span class="id">TC-50 <span>for you to read</span></span>Paginate the audit log</li>
+          </ul></div>
+          <div class="col"><h4>In a cell</h4><ul>
+            <li><span class="id">TC-47</span>Retry webhooks with backoff<span class="charge"><i class="w25"></i></span></li>
+            <li><span class="id">TC-48</span>Show VAT on invoice PDFs<span class="charge"><i class="w50"></i></span></li>
+            <li><span class="id">TC-49</span>Export filter for currency<span class="charge"><i></i></span></li>
+          </ul></div>
+          <div class="col"><h4>Review</h4><ul>
+            <li><span class="id">TC-46</span>Archive paid invoices<span class="charge"><i class="w100"></i></span></li>
+          </ul></div>
+          <div class="col"><h4>Pull request</h4><ul>
+            <li><span class="id">TC-44 <span>#212</span></span>Add CSV export to invoices</li>
+            <li><span class="id">TC-45 <span>#213</span></span>Fix rounding in totals</li>
+          </ul></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ul class="hub-screens">
+    <li data-reveal class="d1"><b>Task board</b>Your tracker's issues, with New Run and a count of what is running and waiting.</li>
+    <li data-reveal class="d2"><b>Fleet</b>A watch loop at the concurrency you set, and the slots in use.</li>
+    <li data-reveal class="d3"><b>Runs</b>Every stage's record, diff, transcript and proof of work.</li>
+    <li data-reveal class="d4"><b>Remote</b>Import a CI run's records and open them like a local run.</li>
+  </ul>
+</section>
+
+<section class="section wrap" id="faq" aria-labelledby="faq-h">
+  <div class="head">
+    <p class="eyebrow" data-reveal>FAQ</p>
+    <h2 id="faq-h" data-reveal class="d1">Questions</h2>
+  </div>
+  <div class="faq d2" data-reveal>
+    <details>
+      <summary>What does it cost?</summary>
+      <p>Taskcell is open source under the MIT license. You pay your model provider, through the plan or the API keys you already have. Each run records its tokens, cache use and cost, and a per-run budget cap stops a run that gets too expensive (on the engines that run the Claude CLI; not yet on Codex or Cursor).</p>
+    </details>
+    <details>
+      <summary>Will it merge anything on its own?</summary>
+      <p>No. It opens pull requests and a person merges them. A failed gate makes the PR a draft rather than hiding the failure.</p>
+    </details>
+    <details>
+      <summary>Do I need a Claude subscription?</summary>
+      <p>No. Claude Code runs on a Claude subscription token or an API key; Codex on an OpenAI key or a ChatGPT plan; Cursor, OpenRouter and z.ai on their own keys. A run that uses only Codex or Cursor needs no Anthropic credential.</p>
+    </details>
+    <details>
+      <summary>Where does my code go?</summary>
+      <p>Your repository is checked out on your host and the agent works on it inside the cell. What the agent sends to its model provider goes there, as with any coding agent. One opt-in feature, the difficulty probe, sends issue text to a decision-model endpoint; it is off unless you turn it on.</p>
+    </details>
+    <details>
+      <summary>What happens when the tests fail?</summary>
+      <p>The card goes back for a repair, at most twice. If it is still red, the PR opens as a draft with a verify-failed label, so you see the failure instead of a green-looking PR.</p>
+    </details>
+    <details>
+      <summary>Why is the command called vanguard?</summary>
+      <p>Taskcell used to be called Vanguard. The CLI, the <code>VANGUARD_*</code> variables, the <code>vanguard:*</code> labels and the <code>.vanguard/</code> folder keep that name for now; the old repository URL redirects to the new one.</p>
+    </details>
+    <details>
+      <summary>Can it run in CI instead of on my machine?</summary>
+      <p>Yes. Reusable GitHub Actions workflows run the same factory when you label an issue, and the Hub can import those runs' records to show them.</p>
+    </details>
+    <details>
+      <summary>Is it audited?</summary>
+      <p>Not by a third party. The security model and its limits are documented in the repository, and vulnerabilities can be reported privately through GitHub.</p>
+    </details>
+  </div>
+</section>
+
+<section class="section end wrap" aria-labelledby="end-h">
+  <h2 class="sr" id="end-h">Get Taskcell</h2>
+  <p class="big" data-reveal>Put one card through it this week.</p>
+  <a class="btn d1" href="https://github.com/spietrza/taskcell" data-reveal>Get it on GitHub</a>
+  <p class="small d2" data-reveal>Open source, MIT. The command is still <code>vanguard</code>.</p>
+</section>
+</main>
+
+<footer class="foot">
+  <p class="name" aria-hidden="true"><svg class="mark" viewBox="0 0 32 32"><path class="wall" d="M2 2h28v16h-4V6H6v20h20v-4h4v8H2z"/><rect class="card" x="12" y="12" width="8" height="8"/></svg>Taskcell</p>
+  <nav aria-label="Footer">
+    <a href="https://github.com/spietrza/taskcell">GitHub</a>
+    <a href="https://github.com/spietrza/taskcell#readme">Documentation</a>
+    <a href="https://github.com/spietrza/taskcell/blob/main/docs/hub.md">Hub guide</a>
+    <a href="https://github.com/spietrza/taskcell/blob/main/SECURITY.md">Security policy</a>
+    <a href="https://github.com/spietrza/taskcell/blob/main/LICENSE">MIT license</a>
+  </nav>
+  <div class="row"><span>taskcell.dev · self-hosted software factory</span><span>3D scene drawn in code with <a href="https://threejs.org">three.js</a>. Fonts: Schibsted Grotesk, Atkinson Hyperlegible, IBM Plex Mono (OFL).</span></div>
+</footer>
+</body>
+</html>
