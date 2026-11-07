@@ -16,14 +16,13 @@ function betaToString(value) {
  * anthropic-beta feature families the sidecar refuses to forward: each lets the upstream reach third-party
  * servers on the sandbox's behalf (MCP connector, web fetch, tunnels) or keep state/run code outside the
  * run (files, code execution, skills, batches, hosted agents/environments) — egress the sandbox
- * allowlist cannot see. Matched on the family name, so a re-dated beta of the same family is still
- * dropped. A denylist rather than an allowlist on purpose: Claude Code ships dozens of betas and adds
- * new ones each release, and dropping an unknown one turns its request fields into upstream 400s.
+ * allowlist cannot see. Prefix-matched on whole name segments, so re-dated, undated and extended
+ * variants (`code-execution-web-tools-…`, `mcp-anything`) are dropped too. A denylist rather than an
+ * allowlist on purpose: Claude Code ships dozens of betas and adds new ones each release, and dropping
+ * an unknown one turns its request fields into upstream 400s.
  */
-const BLOCKED_BETA_FAMILIES = [
-  'mcp-client',
-  'mcp-servers',
-  'mcp-tunnels',
+const BLOCKED_BETA_PREFIXES = [
+  'mcp',
   'web-fetch',
   'code-execution',
   'files-api',
@@ -31,13 +30,44 @@ const BLOCKED_BETA_FAMILIES = [
   'message-batches',
   'managed-agents',
   'environments',
-  'ccr-byoc',
-  'ccr-triggers',
+  'ccr',
 ];
 
-/** A beta value's family: the name without its trailing `-YYYY-MM-DD` date. */
-function betaFamily(value) {
-  return value.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+/** Whether a beta value belongs to a blocked family: equal to a prefix or continuing it with `-`. */
+function isBlockedBeta(value) {
+  return BLOCKED_BETA_PREFIXES.some((p) => value === p || value.startsWith(`${p}-`));
+}
+
+// Server tools that make the upstream fetch URLs, run code or call MCP servers for the sandbox.
+// web_search stays: Claude Code's WebSearch tool depends on it.
+const BLOCKED_TOOL_TYPE = /^(web_fetch|code_execution|mcp)/i;
+
+/**
+ * The request body with egress-capable server tools removed from `tools[]` and the MCP-connector
+ * `mcp_servers` parameter dropped. Returns the input Buffer untouched when there is nothing to strip or
+ * it is not a JSON object (the upstream rejects a malformed body itself).
+ */
+export function stripEgressTools(body) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body.toString('utf8'));
+  } catch {
+    return body;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return body;
+  let changed = false;
+  if ('mcp_servers' in parsed) {
+    delete parsed.mcp_servers;
+    changed = true;
+  }
+  if (Array.isArray(parsed.tools)) {
+    const kept = parsed.tools.filter((t) => !(t !== null && typeof t === 'object' && typeof t.type === 'string' && BLOCKED_TOOL_TYPE.test(t.type)));
+    if (kept.length !== parsed.tools.length) {
+      parsed.tools = kept;
+      changed = true;
+    }
+  }
+  return changed ? Buffer.from(JSON.stringify(parsed), 'utf8') : body;
 }
 
 /**
@@ -48,7 +78,7 @@ export function filterAnthropicBeta(incoming) {
   const kept = (betaToString(incoming) ?? '')
     .split(',')
     .map((s) => s.trim())
-    .filter((s) => s !== '' && !BLOCKED_BETA_FAMILIES.includes(betaFamily(s.toLowerCase())));
+    .filter((s) => s !== '' && !isBlockedBeta(s.toLowerCase()));
   return kept.length > 0 ? kept.join(',') : undefined;
 }
 

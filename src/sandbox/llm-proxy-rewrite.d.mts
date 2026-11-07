@@ -18,6 +18,9 @@ export declare const OAUTH_BETA: 'oauth-2025-04-20';
 /** The request's anthropic-beta minus blocked (egress-capable) feature families; undefined when none remain. */
 export declare function filterAnthropicBeta(incoming: string | string[] | undefined): string | undefined;
 
+/** The body minus egress-capable server tools (web_fetch*, code_execution*, mcp*) and `mcp_servers`; same Buffer when unchanged. */
+export declare function stripEgressTools(body: Buffer): Buffer;
+
 /** Merge request anthropic-beta with an extra value, preserving order and deduping. */
 export declare function mergeAnthropicBeta(incoming: string | string[] | undefined, extra: string): string;
 
