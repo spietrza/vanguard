@@ -189,7 +189,8 @@ async function openEventsSession(): Promise<'ok' | 'restarted' | 'issue'> {
       return 'ok';
     }
     if (response.status === 401 && isHubTokenRejected(await response.json().catch(() => undefined))) return 'restarted';
-    void response.body?.cancel();
+    // A 401 body was already read above (stream locked/disturbed); cancelling it would reject unhandled.
+    if (!response.bodyUsed) void response.body?.cancel().catch(() => undefined);
     return 'issue';
   } catch {
     return 'issue';
