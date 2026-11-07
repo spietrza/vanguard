@@ -7,11 +7,22 @@ import { defaultRunsRoot, fnv1a, runsFingerprint } from './runs.js';
 const DEBOUNCE_MS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 
+/** Shape of `node:fs`'s `watch`, narrowed to the overload this module calls — injectable so tests
+ * can drive deterministic fake events instead of racing the platform's real file-watching backend
+ * (FSEvents on macOS delivers extra/coalesced events compared to inotify on Linux). */
+export type WatchFn = (
+  target: string,
+  options: { recursive: boolean },
+  listener: (event: string, filename: string | null) => void,
+) => FSWatcher;
+
 export interface WatchOptions {
   /** Force polling even when fs.watch works (VANGUARD_HUB_WATCH_POLL=1). */
   forcePoll?: boolean;
   /** Polling interval in ms (VANGUARD_HUB_WATCH_INTERVAL_MS, default 2000). */
   pollIntervalMs?: number;
+  /** Injectable replacement for `fs.watch`, for tests. Defaults to the real `fs.watch`. */
+  watchFn?: WatchFn;
 }
 
 /**
@@ -74,11 +85,13 @@ interface WatchEntry {
 export class WatchRegistry {
   private readonly forcePoll: boolean;
   private readonly pollIntervalMs: number;
+  private readonly watchFn: WatchFn;
   private readonly entries = new Map<string, WatchEntry>();
 
   constructor(opts?: WatchOptions) {
     this.forcePoll = opts?.forcePoll ?? false;
     this.pollIntervalMs = opts?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.watchFn = opts?.watchFn ?? watch;
   }
 
   /** Start (or replace) a watcher for repoPath. */
@@ -144,7 +157,7 @@ export class WatchRegistry {
     };
 
     // Wrapped in try/catch by the caller to detect synchronous setup failure.
-    const fsWatcher: FSWatcher = watch(target, { recursive }, (_event, filename) => {
+    const fsWatcher: FSWatcher = this.watchFn(target, { recursive }, (_event, filename) => {
       sawAny = true;
       if (filename === null || filename === undefined) {
         // Node doesn't guarantee `filename` on every platform — fail open so a real change is

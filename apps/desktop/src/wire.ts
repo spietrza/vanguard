@@ -236,6 +236,21 @@ export interface BoardTask {
   state: string;
   /** Waiting for the factory: carries a trigger label and is still `queued`. Absent when false. */
   waiting?: boolean;
+  /** Current pipeline stage of a running task (from the run's stage marker). Absent ⇒ unknown. */
+  stage?: string;
+  /** Latest run's per-stage/gate verdicts. Absent ⇒ no run record for this task. */
+  chips?: BoardChip[];
+}
+
+/** The reviewer's persisted verdict: `changes` ⇔ the merge gate would request changes. */
+export type ReviewVerdict = 'pass' | 'changes';
+
+/** One Task Board verdict chip: a stage/gate and what it decided. `label` is pre-rendered by core. */
+export interface BoardChip {
+  /** Stage or gate the chip speaks for: a StageOutcome.name, or 'proof' / 'visual-proof'. */
+  key: string;
+  label: string;
+  tone: 'pass' | 'changes' | 'failed';
 }
 
 /** One adversary-stage finding (the `<findings>` block item shape). */
@@ -275,6 +290,12 @@ export interface RunRecord {
   prUrl?: string;
   /** Why no `.diff` / `.bundle` / transcript sit next to this record (see core run-store.ts). */
   diffOmitted?: 'secret-blocked' | 'secret-scan';
+  /** Verdict-bearing stages (reviewer, conformance) only: the merge gate's own reading of this
+   *  stage's reply, persisted so the hub and the PR body never re-derive it. */
+  verdict?: ReviewVerdict;
+  /** The `<findings>` block this stage emitted (the shape the repair gate consumes). Absent when
+   *  the stage emitted none, and withheld entirely when `diffOmitted` is set. */
+  findings?: Finding[];
 }
 
 export interface Proof {

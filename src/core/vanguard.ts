@@ -507,6 +507,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     let costUsd: number | undefined;
     let transcript: string | undefined;
     let modelUsed = input.model;
+    let stopReason: string | undefined;
+    let lastBlock: string | undefined;
 
     for (;;) {
       const next = await gen.next();
@@ -518,6 +520,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
         costUsd = next.value.costUsd;
         transcript = next.value.transcript;
         if (next.value.model !== undefined) modelUsed = next.value.model;
+        stopReason = next.value.stopReason;
+        lastBlock = next.value.lastBlock;
         break;
       }
       if (next.value.sessionId !== undefined) sessionId = safeSession(next.value.sessionId) ?? sessionId;
@@ -585,6 +589,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(costUsd !== undefined ? { costUsd } : {}),
       ...(transcript !== undefined ? { transcript } : {}),
       ...(modelUsed !== undefined ? { model: modelUsed } : {}),
+      ...(stopReason !== undefined ? { stopReason } : {}),
+      ...(lastBlock !== undefined ? { lastBlock } : {}),
     };
     // Stage-complete logs ONLY the flat stageMetric (no finalText/diff/transcript/prompt/secrets).
     ctx.log.info(stageMetric(result, input.stageName, input), 'stage complete');

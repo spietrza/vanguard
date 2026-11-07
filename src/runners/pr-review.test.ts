@@ -8,6 +8,7 @@ import {
   hasPullRequestReviewMarker,
   parsePullRequestRef,
   PR_REVIEW_INCOMPLETE_MARKER,
+  PR_REVIEW_EMPTY_RESULT_NOTICE,
   PR_REVIEW_INCOMPLETE_NOTICE,
   PR_REVIEW_NO_OUTPUT_NOTICE,
   PR_REVIEW_NO_VERDICT_NOTICE,
@@ -236,9 +237,49 @@ describe('reviewPullRequest', () => {
   });
 
   it('incompleteReviewReason: no output → provider failure; small diff → no-verdict; large diff → too-large', () => {
-    expect(incompleteReviewReason('  ', 'x')).toBe('no-output');
-    expect(incompleteReviewReason('partial', 'a\nb')).toBe('no-verdict');
-    expect(incompleteReviewReason('partial', Array.from({ length: 3001 }, () => '+').join('\n'))).toBe('too-large');
+    expect(incompleteReviewReason({ text: '  ' }, 'x')).toBe('no-output');
+    expect(incompleteReviewReason({ text: '  ', outputTokens: 0, turns: 0 }, 'x')).toBe('no-output');
+    expect(incompleteReviewReason({ text: 'partial' }, 'a\nb')).toBe('no-verdict');
+    expect(incompleteReviewReason({ text: 'partial' }, Array.from({ length: 3001 }, () => '+').join('\n'))).toBe('too-large');
+  });
+
+  it('incompleteReviewReason: tokens spent (or turns taken) with empty text is empty-result, not no-output', () => {
+    // Run 42303568145 pass 2: turns 0, 20k output tokens, empty final text — the provider WAS reached.
+    expect(incompleteReviewReason({ text: '', outputTokens: 20348, turns: 0 }, 'x')).toBe('empty-result');
+    expect(incompleteReviewReason({ text: '', turns: 1 }, 'x')).toBe('empty-result');
+  });
+
+  it('empty final text with tokens spent posts the empty-result notice naming the model that ran, and logs stop reason, turns and last block instead of an empty tail', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({
+      text: '',
+      completed: false,
+      turns: 0,
+      outputTokens: 20348,
+      stopReason: 'error_during_execution',
+      lastBlock: '[tool_use:Bash] {"command":"pnpm install"}',
+      model: 'claude-opus-5',
+    });
+    const logs: string[] = [];
+
+    await expect(reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) })).rejects.toBeInstanceOf(
+      PullRequestReviewIncompleteError,
+    );
+
+    const body = calls.find((a) => a[0] === 'pr' && a[1] === 'review')?.at(-1) ?? '';
+    expect(body).toContain(PR_REVIEW_EMPTY_RESULT_NOTICE);
+    expect(body).not.toContain(PR_REVIEW_NO_OUTPUT_NOTICE);
+    expect(body).toContain('Model: claude-opus-5.');
+    expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice (empty-result)');
+    const tails = logs.filter((l) => l.includes('output tail'));
+    expect(tails).toHaveLength(2);
+    for (const tail of tails) {
+      expect(tail).not.toContain('(no output)');
+      expect(tail).toContain('stopReason=error_during_execution');
+      expect(tail).toContain('turns=0');
+      expect(tail).toContain('outputTokens=20348');
+      expect(tail).toContain('lastBlock=[tool_use:Bash]');
+    }
   });
 
   it('incomplete with no output at all posts the provider-failure notice and throws', async () => {
@@ -306,6 +347,7 @@ describe('review prompt and comment formatting', () => {
     expect(prompt).toContain('Fix auth');
     expect(prompt).toContain('diff --git a/auth.ts b/auth.ts');
     expect(prompt).toContain('<promise>COMPLETE</promise>');
+    expect(prompt).toContain('Do not install dependencies, run builds or tests, or otherwise execute any code from this PR');
   });
 
   it('asks for the verdict line first, before any findings', () => {

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
+  // taskcell.dev: the static site in dist/ (node build.mjs) behind a small Worker that only redirects www.
+  // Deployed by hand, never from CI: pnpm build && pnpm dlx wrangler@4 deploy
+  "name": "taskcell-landing",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-06",
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // The Worker has to see www requests before the asset server answers them.
+    "run_worker_first": true
+  },
+  "routes": [
+    { "pattern": "taskcell.dev", "custom_domain": true },
+    { "pattern": "www.taskcell.dev", "custom_domain": true }
+  ]
+}

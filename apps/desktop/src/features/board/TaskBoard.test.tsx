@@ -104,3 +104,36 @@ test('the cap banner follows the RESPONSE capped flag, not a client-side count (
   render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
   expect(await screen.findByText(/Showing the first 5 tasks/)).toBeInTheDocument();
 });
+
+test('T26/T27/T28: stage and verdict pills stay in their intended lanes, with tone classes', async () => {
+  const chips: NonNullable<BoardTask['chips']> = [
+    { key: 'implementer', label: 'implementer: ok', tone: 'pass' },
+    { key: 'reviewer', label: 'reviewer: changes (2)', tone: 'changes' },
+    { key: 'proof', label: 'proof: fail', tone: 'failed' },
+    { key: 'future', label: 'future gate', tone: 'unknown' as 'pass' },
+  ];
+  mockListTasks.mockResolvedValue({ capped: false, tasks: [
+    { id: 'r', title: 'Running stage', column: 'running', state: '', stage: 'implementer' },
+    { id: 'rev', title: 'Review chips', column: 'review', state: '', chips },
+    { id: 'done', title: 'Done chips', column: 'done', state: '', chips },
+    { id: 'q', title: 'Queued chips', column: 'queued', state: '', chips },
+  ] });
+  render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
+  await screen.findByText('Running stage');
+  expect(within(lane('Running')).getByText('stage: implementer')).toBeInTheDocument();
+  for (const label of ['Review', 'Done']) {
+    const scope = within(lane(label));
+    expect(scope.getByText('implementer: ok').className).toContain('emerald');
+    expect(scope.getByText('reviewer: changes (2)').className).toContain('amber');
+    expect(scope.getByText('proof: fail').className).toContain('rose');
+    expect(scope.getByText('future gate').className).toContain('slate');
+  }
+  expect(within(lane('Queued')).queryByText('implementer: ok')).not.toBeInTheDocument();
+});
+
+test('T26: a running card without a stage has no stage line', async () => {
+  mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
+  render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
+  await screen.findByText('Running one');
+  expect(within(lane('Running')).queryByText(/^stage:/)).not.toBeInTheDocument();
+});

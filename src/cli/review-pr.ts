@@ -27,6 +27,9 @@ import { DEFAULT_REVIEW_MAX_TURNS } from './args.js';
 import type { Command } from './args.js';
 
 type ReviewPrCommand = Extract<Command, { kind: 'review-pr' }>;
+
+/** The reviewer may read the repository for context but never execute anything (no Bash/Write/Edit). */
+export const PR_REVIEW_TOOLS: readonly string[] = ['Read', 'Grep', 'Glob'];
 type ReviewPullRequestRunner = (ref: string, deps: ReviewPullRequestDeps) => Promise<ReviewPullRequestResult>;
 
 export interface ReviewPrCommandDeps {
@@ -169,10 +172,22 @@ async function runDefaultReviewer(
         effort: opts.isRetry ? 'xhigh' : 'high',
         maxTurns: opts.isRetry ? Math.min(Math.ceil(baseTurns * 1.5), Number.MAX_SAFE_INTEGER) : baseTurns,
         copyBack: false,
+        // Read-only: the PR code is untrusted and never run. With Bash the reviewer installs node_modules
+        // and runs the project instead of reviewing the diff it was given.
+        allowedTools: [...PR_REVIEW_TOOLS],
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });
       outcomes.push({ name: opts.isRetry ? 'pr-review-retry' : 'pr-review', result, ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}) });
-      return { text: result.finalText, completed: result.completed };
+      return {
+        text: result.finalText,
+        completed: result.completed,
+        turns: result.turns,
+        ...(result.usage !== undefined ? { outputTokens: result.usage.outputTokens } : {}),
+        ...(result.stopReason !== undefined ? { stopReason: result.stopReason } : {}),
+        ...(result.lastBlock !== undefined ? { lastBlock: result.lastBlock } : {}),
+        // The model the provider reported, not the requested one: a gateway or alias can serve another.
+        ...(result.model !== undefined ? { model: result.model } : {}),
+      };
     } finally {
       await disposeContext(ctx);
     }

@@ -21,3 +21,11 @@ describe('taskRefKey', () => {
     expect(taskRefKey('owner/repo#weird')).toBe('owner/repo#weird');
   });
 });
+
+it.each([
+  ['gh-904', 'gh-904'], ['gh-owner-repo-904', 'gh-904'],
+  ['gl-42', 'gl-42'], ['gl-group-proj-42', 'gl-42'],
+  ['linear-dev-639', 'linear-dev-639'], ['LINEAR-DEV-639', 'linear-dev-639'], ['Unknown', 'unknown'],
+])('core parity: taskRefKey(%s) = %s', (id, expected) => {
+  expect(taskRefKey(id)).toBe(expected);
+});

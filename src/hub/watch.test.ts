@@ -1,8 +1,9 @@
+import type { FSWatcher } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isDraftPath, WatchRegistry } from './watch.js';
+import { isDraftPath, WatchRegistry, type WatchFn } from './watch.js';
 
 // Captured before any `vi.useFakeTimers()` call so the polling-mode tests can force a genuine
 // wall-clock wait for real fs I/O to settle, independent of the faked `setTimeout`/`setInterval`.
@@ -37,6 +38,36 @@ async function flushAsync(ms = 100): Promise<void> {
   await new Promise((resolve) => realSetTimeout(resolve, ms));
 }
 
+/**
+ * A fake `fs.watch` for driving `WatchRegistry` with deterministic synthetic events instead of
+ * racing the platform's real watcher backend (FSEvents on macOS delivers extra/coalesced events
+ * compared to inotify, which the suppression logic in T-72/T-73 isn't meant to be sensitive to).
+ */
+function makeFakeWatch(): {
+  watchFn: WatchFn;
+  emit: (filename: string | null) => void;
+} {
+  type Listener = (event: string, filename: string | null) => void;
+  const listeners: Listener[] = [];
+
+  const watchFn: WatchFn = (_target, _options, listener) => {
+    listeners.push(listener);
+    return {
+      close: (): void => {
+        listeners.splice(listeners.indexOf(listener), 1);
+      },
+      on: (): FSWatcher => undefined as unknown as FSWatcher,
+    } as unknown as FSWatcher;
+  };
+
+  return {
+    watchFn,
+    emit: (filename: string | null): void => {
+      for (const listener of listeners) listener('change', filename);
+    },
+  };
+}
+
 describe('isDraftPath', () => {
   it('matches structurally, with adjacency required', () => {
     expect(isDraftPath('/r/.vanguard/drafts/draft-a.json')).toBe(true);
@@ -48,43 +79,59 @@ describe('isDraftPath', () => {
   });
 });
 
-describe('WatchRegistry — fs.watch mode', () => {
-  it('T-71: a write under .vanguard/runs causes exactly one debounced onChange with the right repoPath', async () => {
-    await mkdir(join(tmp, '.vanguard', 'runs'), { recursive: true });
-    const registry = new WatchRegistry();
-    const onChange = vi.fn();
-    registry.watchProject(tmp, onChange);
+describe('WatchRegistry — fs.watch mode (real fs smoke test)', () => {
+  // Real fs.watch backends differ across platforms (FSEvents on macOS coalesces/duplicates events
+  // compared to inotify on Linux) — keep one real-fs test for sanity on the CI platform, but don't
+  // run it where that platform noise would make it flaky. The deterministic cases below drive
+  // WatchRegistry through an injected fake watcher instead.
+  it.skipIf(process.platform !== 'linux')(
+    'T-71: a write under .vanguard/runs causes exactly one debounced onChange with the right repoPath',
+    async () => {
+      await mkdir(join(tmp, '.vanguard', 'runs'), { recursive: true });
+      const registry = new WatchRegistry();
+      const onChange = vi.fn();
+      registry.watchProject(tmp, onChange);
 
-    await write(join(tmp, '.vanguard', 'runs', 'task-1', 'run.json'), '{}');
-    await write(join(tmp, '.vanguard', 'runs', 'task-1', 'run.json'), '{"a":1}');
+      await write(join(tmp, '.vanguard', 'runs', 'task-1', 'run.json'), '{}');
+      await write(join(tmp, '.vanguard', 'runs', 'task-1', 'run.json'), '{"a":1}');
 
-    await waitPastDebounce();
+      await waitPastDebounce();
 
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith(tmp);
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledWith(tmp);
 
-    registry.closeAll();
+      registry.closeAll();
+    },
+  );
+});
+
+describe('WatchRegistry — fs.watch mode (fake watcher, deterministic)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('T-72: drafts-only bursts are suppressed; a mixed burst with a non-draft path triggers', async () => {
     await mkdir(join(tmp, '.vanguard', 'drafts'), { recursive: true });
     await mkdir(join(tmp, '.vanguard', 'runs'), { recursive: true });
-    const registry = new WatchRegistry();
+    const fake = makeFakeWatch();
+    const registry = new WatchRegistry({ watchFn: fake.watchFn });
     const onChange = vi.fn();
     registry.watchProject(tmp, onChange);
 
-    await write(join(tmp, '.vanguard', 'drafts', 'draft-a.json'), '{}');
-    await write(join(tmp, '.vanguard', 'drafts', '.gitignore'), '*');
+    fake.emit(join('drafts', 'draft-a.json'));
+    fake.emit(join('drafts', '.gitignore'));
 
-    await waitPastDebounce();
+    await vi.advanceTimersByTimeAsync(300);
     expect(onChange).not.toHaveBeenCalled();
 
-    await Promise.all([
-      write(join(tmp, '.vanguard', 'drafts', 'draft-b.json'), '{}'),
-      write(join(tmp, '.vanguard', 'runs', 'task-2', 'run.json'), '{}'),
-    ]);
+    fake.emit(join('drafts', 'draft-b.json'));
+    fake.emit(join('runs', 'task-2', 'run.json'));
 
-    await waitPastDebounce();
+    await vi.advanceTimersByTimeAsync(300);
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith(tmp);
 
@@ -93,20 +140,23 @@ describe('WatchRegistry — fs.watch mode', () => {
 
   it('T-73: re-watchProject replaces (no duplicate callbacks); unwatchProject stops further callbacks', async () => {
     await mkdir(join(tmp, '.vanguard', 'runs'), { recursive: true });
-    const registry = new WatchRegistry();
+    const fake = makeFakeWatch();
+    const registry = new WatchRegistry({ watchFn: fake.watchFn });
     const onChange = vi.fn();
     registry.watchProject(tmp, onChange);
+    fake.emit(join('runs', 'task-3', 'pending.json'));
     registry.watchProject(tmp, onChange); // replace — must not stack a second watcher
 
-    await write(join(tmp, '.vanguard', 'runs', 'task-3', 'run.json'), '{}');
-    await waitPastDebounce();
+    fake.emit(join('runs', 'task-3', 'run.json'));
+    await vi.advanceTimersByTimeAsync(300);
     expect(onChange).toHaveBeenCalledTimes(1);
 
+    fake.emit(join('runs', 'task-3', 'pending.json'));
     registry.unwatchProject(tmp);
     onChange.mockClear();
 
-    await write(join(tmp, '.vanguard', 'runs', 'task-3', 'run2.json'), '{}');
-    await waitPastDebounce();
+    fake.emit(join('runs', 'task-3', 'run2.json'));
+    await vi.advanceTimersByTimeAsync(300);
     expect(onChange).not.toHaveBeenCalled();
 
     registry.closeAll();
