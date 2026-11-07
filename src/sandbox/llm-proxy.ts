@@ -9,7 +9,8 @@ import type { Upstream } from './llm-proxy-rewrite.mjs';
 export type { DockerRunner } from './sidecar.js';
 
 const PROXY_PORT = 8088;
-const SECRET_FILE = '/tmp/llm-proxy-secret';
+// Its own directory: startSidecar mounts the secret's directory as a dedicated in-RAM tmpfs.
+const SECRET_FILE = '/run/vanguard-llm/secret';
 // Resolves to dist/sandbox/llm-proxy-server.mjs (built) or src/... (tsx) — next to this module.
 const PROXY_SCRIPT = fileURLToPath(new URL('./llm-proxy-server.mjs', import.meta.url));
 // Shared pure logic the server imports via a relative `./llm-proxy-rewrite.mjs`; cp'd into the SAME

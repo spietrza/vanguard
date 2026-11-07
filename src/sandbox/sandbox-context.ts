@@ -74,7 +74,8 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
   const extras = opts.extraEgressHosts ?? [];
   const baseAllowlist = opts.llmProxy ? llmProxyEgressAllowlist() : DEFAULT_EGRESS_ALLOWLIST;
   const enclave = await startEgressEnclave(
-    extras.length > 0 || opts.llmProxy ? { allowlist: [...baseAllowlist, ...extras] } : {},
+    // Customs are explicitly configured endpoints: exempt them from the 443/public-address rule.
+    extras.length > 0 || opts.llmProxy ? { allowlist: [...baseAllowlist, ...extras], ...(extras.length > 0 ? { trusted: extras } : {}) } : {},
   );
   console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
 

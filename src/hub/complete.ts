@@ -6,6 +6,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { readAppConfig } from './app-config.js';
+import { BadRequestError } from '../sidecar/sidecar.js';
 
 /** Allowlist, deliberately not an Omit<> of some wider type: every field here is one the caller is
  * permitted to send. A new field must be added HERE to cross the RPC boundary (mirrors ipc.ts's
@@ -26,6 +27,18 @@ export interface CompleteResult {
 export const COMPLETE_TIMEOUT_MS = 180_000;
 
 export type SpawnComplete = () => ChildProcess;
+
+// ponytail: at most 3 doc-chat turns in flight per hub — each is a child process holding a model
+// call for up to COMPLETE_TIMEOUT_MS, so an unbounded caller could fork without limit.
+export const MAX_CONCURRENT_COMPLETES = 3;
+
+/** A doc-chat turn refused because MAX_CONCURRENT_COMPLETES are already running; the server maps it
+ * to HTTP 429 (src/hub/server.ts). */
+export class CompleteBusyError extends BadRequestError {
+  constructor() {
+    super(`too many doc chat requests in flight (max ${MAX_CONCURRENT_COMPLETES}) — wait for one to finish and retry`);
+  }
+}
 
 /** Resolve the `vanguard __complete` entry point without assuming `vanguard` is on PATH: the hub may
  * run from `dist/cli/index.js` or under `tsx`, so re-invoke the current process's own entry script.
@@ -95,16 +108,20 @@ function exchange(child: ChildProcess, req: unknown, timeoutMs: number): Promise
  */
 export class CompleteRegistry {
   private readonly children = new Map<string, ChildProcess>();
+  private inFlight = 0;
 
   constructor(
     private readonly spawnComplete: SpawnComplete = defaultSpawnComplete,
     private readonly timeoutMs: number = COMPLETE_TIMEOUT_MS,
+    private readonly maxConcurrent: number = MAX_CONCURRENT_COMPLETES,
   ) {}
 
   async complete(repoPath: string, params: CompleteParams, callId?: string): Promise<CompleteResult> {
+    if (this.inFlight >= this.maxConcurrent) throw new CompleteBusyError();
     // Spawn + register BEFORE any await: a Stop click racing this call must always find the child it
     // is trying to cancel, so registration cannot wait on an async read (readAppConfig below).
     const child = this.spawnComplete();
+    this.inFlight += 1;
     if (callId !== undefined) {
       this.children.set(callId, child);
     }
@@ -124,6 +141,7 @@ export class CompleteRegistry {
       };
       return await exchange(child, req, this.timeoutMs);
     } finally {
+      this.inFlight -= 1;
       if (callId !== undefined) this.children.delete(callId);
       child.kill();
     }

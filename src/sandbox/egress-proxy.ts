@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { LlmProxyDep } from './llm-proxy.js';
 // Single source of the allow semantics + default allowlist: the same plain-ESM `.mjs` the sidecar
 // imports (see egress-allow.mjs). Re-exported below so existing import sites keep working.
-import { isAllowed, DEFAULT_EGRESS_ALLOWLIST } from './egress-allow.mjs';
+import { isAllowed, DEFAULT_EGRESS_ALLOWLIST, resolveConnectTarget, connectOptions } from './egress-allow.mjs';
 import { UPSTREAMS } from './llm-proxy-rewrite.mjs';
 
 export { isAllowed, DEFAULT_EGRESS_ALLOWLIST };
@@ -87,29 +87,33 @@ export function llmProxyEgressAllowlist(base: readonly string[] = DEFAULT_EGRESS
  * (soft) egress control: point the sandbox's HTTPS_PROXY at this. It does not block a sandbox that
  * bypasses the proxy — kernel-level enforcement is phase 2.
  */
-export async function startEgressProxy(opts: { allowlist?: readonly string[]; port?: number } = {}): Promise<EgressProxy> {
+export async function startEgressProxy(
+  opts: { allowlist?: readonly string[]; trusted?: readonly string[]; port?: number } = {},
+): Promise<EgressProxy> {
   const allowlist = opts.allowlist ?? DEFAULT_EGRESS_ALLOWLIST;
+  const trusted = (opts.trusted ?? []).map((h) => h.toLowerCase());
   const server = createServer((_req, res) => {
     res.writeHead(405).end('This proxy only supports HTTPS CONNECT.');
   });
 
   server.on('connect', (req, clientSocket, head) => {
-    const target = req.url ?? '';
-    const sep = target.lastIndexOf(':');
-    const host = sep > 0 ? target.slice(0, sep) : target;
-    const port = sep > 0 ? Number(target.slice(sep + 1)) : 443;
-    if (host === '' || !Number.isInteger(port) || !isAllowed(host, allowlist)) {
-      clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
-      return;
-    }
-    const upstream = connect(port, host, () => {
-      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      upstream.write(head);
-      upstream.pipe(clientSocket);
-      clientSocket.pipe(upstream);
-    });
-    upstream.on('error', () => clientSocket.destroy());
-    clientSocket.on('error', () => upstream.destroy());
+    clientSocket.on('error', () => clientSocket.destroy());
+    // Same rule as the enclave sidecar: port 443, public addresses, unless the host is trusted.
+    resolveConnectTarget(req.url ?? '', allowlist, trusted).then((dest) => {
+      if (dest === undefined) {
+        clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+        return;
+      }
+      if (clientSocket.destroyed) return;
+      const upstream = connect(connectOptions(dest), () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        upstream.write(head);
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      });
+      upstream.on('error', () => clientSocket.destroy());
+      clientSocket.on('error', () => upstream.destroy());
+    }, () => clientSocket.destroy());
   });
 
   await new Promise<void>((resolve) => server.listen(opts.port ?? 0, resolve));

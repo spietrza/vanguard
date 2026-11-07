@@ -1,6 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { isStaleEmptyNetwork, reapContainers, reapEgressNetworks, reapRemoteBranches } from './gc.js';
+import { isStaleEmptyNetwork, prsProveFinished, reapContainers, reapEgressNetworks, reapRemoteBranches } from './gc.js';
 import type { ContainerInfo, RemoteBranchInfo } from './gc.js';
+
+describe('prsProveFinished', () => {
+  it('needs a PR in the state whose head commit is the current branch tip', () => {
+    expect(prsProveFinished([{ state: 'CLOSED', headRefOid: 'tip' }], 'CLOSED', 'tip')).toBe(true);
+    expect(prsProveFinished([{ state: 'MERGED', headRefOid: 'tip' }], 'MERGED', 'tip')).toBe(true);
+  });
+
+  it('keeps a live branch that only shares its head name with a closed PR (different tip)', () => {
+    expect(prsProveFinished([{ state: 'CLOSED', headRefOid: 'old' }], 'CLOSED', 'new')).toBe(false);
+  });
+
+  it('keeps the branch while any OPEN PR uses that head name', () => {
+    expect(prsProveFinished([{ state: 'CLOSED', headRefOid: 'tip' }, { state: 'OPEN', headRefOid: 'other' }], 'CLOSED', 'tip')).toBe(false);
+  });
+
+  it('keeps the branch when the tip is unknown or the state differs', () => {
+    expect(prsProveFinished([{ state: 'CLOSED', headRefOid: 'tip' }], 'CLOSED', undefined)).toBe(false);
+    expect(prsProveFinished([{ state: 'MERGED', headRefOid: 'tip' }], 'CLOSED', 'tip')).toBe(false);
+    expect(prsProveFinished([], 'MERGED', 'tip')).toBe(false);
+  });
+});
 
 describe('reapContainers', () => {
   it('removes only containers older than maxAge', async () => {
@@ -154,6 +175,18 @@ describe('reapRemoteBranches', () => {
         { abandoned: true, isAbandoned: async (name) => name === 'vanguard/abandoned' },
       );
       expect(result).toEqual(['vanguard/merged', 'vanguard/abandoned']);
+    });
+
+    it('hands each checker the branch tip so a PR is matched by head commit, not by name alone', async () => {
+      const seen: Array<[string, string | undefined]> = [];
+      await reapRemoteBranches(
+        async () => [{ name: 'vanguard/x', ageMs: 10_000, sha: 'tip1' }],
+        async (name, sha) => { seen.push([name, sha]); return false; },
+        async () => {},
+        1_000,
+        { abandoned: true, isAbandoned: async (name, sha) => { seen.push([name, sha]); return false; } },
+      );
+      expect(seen).toEqual([['vanguard/x', 'tip1'], ['vanguard/x', 'tip1']]);
     });
 
     it('does not reap closed-unmerged branches when abandoned flag is absent', async () => {

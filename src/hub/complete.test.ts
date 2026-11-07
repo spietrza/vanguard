@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { CompleteRegistry } from './complete.js';
+import { CompleteBusyError, CompleteRegistry } from './complete.js';
 import { writeAppConfig } from './app-config.js';
 import type { ChildProcess } from 'node:child_process';
 
@@ -113,6 +113,27 @@ describe('CompleteRegistry', () => {
     fakeB.stdout.write(`${JSON.stringify({ text: 'b done' })}\n`);
     await expect(promiseA).rejects.toThrow();
     await expect(promiseB).resolves.toEqual({ text: 'b done' });
+  });
+
+  test('rejects a turn past the concurrency cap without spawning, and frees the slot when one ends', async () => {
+    const fakes = [new FakeChild(), new FakeChild(), new FakeChild()];
+    let spawned = 0;
+    const registry = new CompleteRegistry(() => fakes[spawned++] as unknown as ChildProcess, 10_000, 2);
+    const first = registry.complete(repoPath, { messages: [], model: 'm' });
+    const second = registry.complete(repoPath, { messages: [], model: 'm' });
+    await expect(registry.complete(repoPath, { messages: [], model: 'm' })).rejects.toBeInstanceOf(CompleteBusyError);
+    expect(spawned).toBe(2);
+
+    await new Promise((r) => setTimeout(r, 20));
+    fakes[0]!.stdout.write(`${JSON.stringify({ text: 'one' })}\n`);
+    await expect(first).resolves.toEqual({ text: 'one' });
+    const third = registry.complete(repoPath, { messages: [], model: 'm' });
+    expect(spawned).toBe(3);
+    await new Promise((r) => setTimeout(r, 20));
+    fakes[1]!.stdout.write(`${JSON.stringify({ text: 'two' })}\n`);
+    fakes[2]!.stdout.write(`${JSON.stringify({ text: 'three' })}\n`);
+    await expect(second).resolves.toEqual({ text: 'two' });
+    await expect(third).resolves.toEqual({ text: 'three' });
   });
 
   test('cancel() on an unknown callId is a silent no-op', () => {
