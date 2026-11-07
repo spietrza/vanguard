@@ -381,3 +381,16 @@ describe('reviewMergeRequest incomplete retry', () => {
     expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
   });
 });
+
+import { instructionSourceNote } from './review-prompt.js';
+it('places trusted instruction disclosure in the first authoritative block only when supplied', () => {
+  const change = BASE_MR;
+  const instructions = { ref: 'main', sha: 'abcdef012345', written: [], removed: [], differing: ['src/<odd>/CLAUDE.md'] };
+  const note = instructionSourceNote({ ...instructions, baseRefName: change.targetBranch });
+  const plain = buildMergeRequestReviewPrompt(change);
+  const overlaid = buildMergeRequestReviewPrompt(change, { instructions });
+  const firstBlock = overlaid.slice(overlaid.indexOf('<task_instructions>'), overlaid.indexOf('</task_instructions>'));
+  expect(firstBlock).toContain(note);
+  expect(overlaid.indexOf(note)).toBeLessThan(overlaid.indexOf('<mr_metadata>'));
+  expect(overlaid.replace(note + '\n', '')).toBe(plain);
+});

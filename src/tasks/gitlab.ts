@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { VanguardError } from '../core/errors.js';
 import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
 import { redactForPublish } from '../core/secret-scan.js';
 
@@ -195,4 +196,17 @@ export async function editGitlabLabels(
   for (const label of labels.add ?? []) args.push('--label', label);
   for (const label of labels.remove ?? []) args.push('--unlabel', label);
   if (args.length > 5) await glab(args);
+}
+
+/** The default branch is the only branch whose instruction files a review trusts. */
+export async function gitlabDefaultBranch(project: string, glab: GlabRunner = defaultGlabRunner): Promise<string> {
+  let data: { default_branch?: unknown } | null;
+  try {
+    data = JSON.parse(await glab(['api', `projects/${encodeProject(project)}`])) as typeof data;
+  } catch (cause) {
+    throw new VanguardError('Cannot establish the repository default branch', { cause });
+  }
+  const name = data?.default_branch;
+  if (typeof name !== 'string' || name.trim() === '') throw new VanguardError('Cannot establish the repository default branch');
+  return name;
 }

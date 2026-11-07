@@ -45,6 +45,7 @@ describe('reviewMrCommand', () => {
     const glab: GlabRunner = async (args) => {
       calls.push(args);
       if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha });
+      if (args[0] === 'api' && args[1] === 'projects/g%2Fp') return JSON.stringify({ default_branch: 'main' });
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
       if (args[0] === 'api') return JSON.stringify([{ system: false, author: { username: 'vanguard-bot' }, body: mergeRequestReviewMarker(sha) }]);
       return '';
@@ -53,7 +54,7 @@ describe('reviewMrCommand', () => {
 
     await reviewMrCommand(
       { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true },
-      { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: (l) => lines.push(l) },
+      { glab, reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: (l) => lines.push(l) },
     );
 
     expect(startSandboxContext).not.toHaveBeenCalled();
@@ -75,6 +76,7 @@ describe('reviewMrCommand', () => {
     const glab: GlabRunner = async (args) => {
       calls.push(args);
       if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha });
+      if (args[0] === 'api' && args[1] === 'projects/g%2Fp') return JSON.stringify({ default_branch: 'main' });
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
       if (args[0] === 'api') return '[]';
       return '';
@@ -82,7 +84,7 @@ describe('reviewMrCommand', () => {
 
     await reviewMrCommand(
       { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true },
-      { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+      { glab, reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
     );
 
     expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([16, 24]);
@@ -102,17 +104,21 @@ describe('reviewMrCommand', () => {
       for (const targetBranch of ['release', undefined]) {
         const glab: GlabRunner = async (args) => {
           if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123def4567890', ...(targetBranch !== undefined ? { target_branch: targetBranch } : {}) });
+          if (args[0] === 'api' && args[1] === 'projects/g%2Fp') return JSON.stringify({ default_branch: 'main' });
           if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
           if (args[0] === 'api') return '[]';
           return '';
         };
         await reviewMrCommand(
           { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true },
-          { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+          { glab, reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
         );
       }
       const prepared = vi.mocked(prepareContext).mock.calls.map(([opts]) => [opts.baseBranch, opts.start]);
       expect(prepared).toEqual([['release', 'base'], ['main', 'base']]);
+      expect(vi.mocked(prepareContext).mock.calls[0]?.[1]?.seedWorktree).toBeTypeOf('function');
+      expect(vi.mocked(prepareContext).mock.calls[1]?.[1]?.seedWorktree).toBeUndefined();
+      expect(vi.mocked(runAgent).mock.calls.at(-1)?.[1].variables?.PROMPT).not.toContain('were taken from the default branch');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('MR g/p!5 carries no base branch'));
     } finally {
       warn.mockRestore();
@@ -140,13 +146,14 @@ describe('reviewMrCommand', () => {
       vi.mocked(runAgent).mockResolvedValue({ ...attempt, completed: true, finalText: 'No blocking findings.' });
       const glab: GlabRunner = async (args) => {
         if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123def4567890', target_branch: 'main' });
+        if (args[0] === 'api' && args[1] === 'projects/g%2Fp') return JSON.stringify({ default_branch: 'main' });
         if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
         if (args[0] === 'api') return '[]';
         return '';
       };
       await reviewMrCommand(
         { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: join(root, 'repo'), egress: true, skillsDir: join(root, 'bundled') },
-        { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+        { glab, reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
       );
       // prepareContext gets a resolver: repo skills are read from the worktree it cuts, not the host checkout.
       const resolve = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
@@ -171,6 +178,7 @@ describe('reviewMrCommand', () => {
       .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
     const glab: GlabRunner = async (args) => {
       if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123def4567890' });
+      if (args[0] === 'api' && args[1] === 'projects/g%2Fp') return JSON.stringify({ default_branch: 'main' });
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
       if (args[0] === 'api') return '[]';
       return '';
@@ -178,9 +186,25 @@ describe('reviewMrCommand', () => {
 
     await reviewMrCommand(
       { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true, maxTurns: 41 },
-      { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+      { glab, reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
     );
 
     expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([41, 62]);
   });
+});
+
+it('a failed default-branch API call posts neither a verdict nor an incomplete notice', async () => {
+  vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'sk-ant-oat-test');
+  vi.mocked(startSandboxContext).mockResolvedValue({ destroy: async () => undefined } as never);
+  const calls: string[][] = [];
+  const glab: GlabRunner = async (args) => {
+    calls.push(args);
+    if (args[0] === 'api' && args[1] === 'projects/g%2Fp') throw new Error('project API failed');
+    if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123', target_branch: 'release' });
+    return '';
+  };
+  try {
+    await expect(reviewMrCommand({ kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: false }, { glab, headDedupe: false, log: () => undefined })).rejects.toThrow('Cannot establish the repository default branch');
+    expect(calls.some((args) => args[1] === 'note')).toBe(false);
+  } finally { vi.unstubAllEnvs(); }
 });

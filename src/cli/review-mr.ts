@@ -1,3 +1,7 @@
+import { gitlabDefaultBranch, defaultGlabRunner } from '../tasks/gitlab.js';
+import type { GlabRunner } from '../tasks/gitlab.js';
+import { overlayInstructionFiles } from '../context/instruction-files.js';
+import type { InstructionOverlay } from '../context/instruction-files.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -28,6 +32,7 @@ type ReviewMrCommand = Extract<Command, { kind: 'review-mr' }>;
 type ReviewMergeRequestRunner = (ref: string, deps: ReviewMergeRequestDeps) => Promise<ReviewMergeRequestResult>;
 
 export interface ReviewMrCommandDeps {
+  glab?: GlabRunner;
   reviewer?: MergeRequestReviewer;
   reviewMergeRequest?: ReviewMergeRequestRunner;
   log?: (line: string) => void;
@@ -41,7 +46,7 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
   const runReview = deps.reviewMergeRequest ?? reviewMergeRequest;
   const headDedupe = deps.headDedupe !== undefined ? { headDedupe: deps.headDedupe } : {};
   if (deps.reviewer !== undefined) {
-    const result = await runReview(String(cmd.iid), { reviewer: deps.reviewer, project: cmd.project, log, ...headDedupe });
+    const result = await runReview(String(cmd.iid), { reviewer: deps.reviewer, project: cmd.project, ...(deps.glab !== undefined ? { glab: deps.glab } : {}), log, ...headDedupe });
     logDone(result, log);
     return;
   }
@@ -60,10 +65,10 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
       ...(auth !== undefined ? { auth } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     });
-    return await runDefaultMrReviewer(mr, cmd, auth, await sandboxContext, opts);
+    return await runDefaultMrReviewer(mr, cmd, auth, await sandboxContext, opts, deps.glab ?? defaultGlabRunner);
   };
   try {
-    const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log, ...headDedupe });
+    const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, ...(deps.glab !== undefined ? { glab: deps.glab } : {}), log, ...headDedupe });
     logDone(result, log);
   } finally {
     const started = await sandboxContext?.catch(() => undefined);
@@ -82,6 +87,7 @@ async function runDefaultMrReviewer(
   auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
   opts: MergeRequestReviewAttempt,
+  glab: GlabRunner,
 ): Promise<MergeRequestReviewOutcome> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
 
@@ -106,17 +112,21 @@ async function runDefaultMrReviewer(
     const taskId = `mr-review-${mr.project.replace(/[^a-zA-Z0-9]/g, '-')}-${mr.iid}`;
     // The reviewer reads the tree the change lands on: the MR's target branch as origin has it.
     const baseBranch = baseBranchOrDefault(mr.targetBranch, `MR ${mr.project}!${mr.iid}`);
+    const instructionRef = await gitlabDefaultBranch(mr.project, glab);
+    let overlay: InstructionOverlay | undefined;
     const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch, start: 'base' }, {
-      // Repo skills come from the worktree (the base as origin has it), never from the host checkout,
-      // which may hold the change under review: it must not be able to rewrite its own reviewer's skills.
+      // Load repo skills after the trusted default-branch instructions have been overlaid.
       skills: (worktreePath) => skillRegistryForRun(cmd.skillsDir, worktreePath),
+      ...(instructionRef !== baseBranch ? { seedWorktree: async (worktreePath: string) => {
+        overlay = await overlayInstructionFiles({ repoPath: cmd.repoPath, worktreePath, ref: instructionRef });
+      } } : {}),
     });
     const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {
         stageName: 'mr-review',
         agent: agents.agent,
-        ...literalPrompt(buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry })),
+        ...literalPrompt(buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry, ...(overlay !== undefined ? { instructions: overlay } : {}) })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
         maxTurns: opts.isRetry ? Math.min(Math.ceil(baseTurns * 1.5), Number.MAX_SAFE_INTEGER) : baseTurns,

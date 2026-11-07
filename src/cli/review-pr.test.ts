@@ -16,6 +16,7 @@ vi.mock('../core/vanguard.js', async (importOriginal) => ({
 }));
 
 import { prepareContext, runAgent } from '../core/vanguard.js';
+import { execa } from 'execa';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -131,6 +132,7 @@ describe('reviewPrCommand', () => {
       // The injected runner hands the default reviewer a PR against `release`, then one with no base at all.
       for (const baseRefName of ['release', '']) {
         await reviewPrCommand(cmd, {
+          gh: async () => JSON.stringify({ defaultBranchRef: { name: 'main' } }),
           reviewPullRequest: async (_ref, deps) => {
             await deps.reviewer({ ...fakeResult().pr, baseRefName }, { isRetry: false });
             return fakeResult();
@@ -140,6 +142,9 @@ describe('reviewPrCommand', () => {
       }
       const prepared = vi.mocked(prepareContext).mock.calls.map(([opts]) => [opts.baseBranch, opts.start]);
       expect(prepared).toEqual([['release', 'base'], ['main', 'base']]);
+      expect(vi.mocked(prepareContext).mock.calls[0]?.[1]?.seedWorktree).toBeTypeOf('function');
+      expect(vi.mocked(prepareContext).mock.calls[1]?.[1]?.seedWorktree).toBeUndefined();
+      expect(vi.mocked(runAgent).mock.calls.at(-1)?.[1].variables?.PROMPT).not.toContain('were taken from the default branch');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('PR o/r#12 carries no base branch'));
     } finally {
       warn.mockRestore();
@@ -176,6 +181,7 @@ describe('reviewPrCommand', () => {
         skillsDir: join(root, 'bundled'),
       };
       await reviewPrCommand(cmd, {
+        gh: async () => JSON.stringify({ defaultBranchRef: { name: 'main' } }),
         reviewPullRequest: async (_ref, deps) => {
           await deps.reviewer(fakeResult().pr, { isRetry: false });
           return fakeResult();
@@ -256,13 +262,14 @@ describe('reviewPrCommand', () => {
         .mockResolvedValueOnce({ ...attempt, completed: false, finalText: 'Partial' })
         .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
       const gh: GhRunner = async (args) => {
+        if (args[0] === 'repo') return JSON.stringify({ defaultBranchRef: { name: 'main' } });
         if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ number: 12, headRefOid: 'abc123' });
         return '';
       };
 
       await reviewPrCommand(
         { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: true, ...(maxTurns !== undefined ? { maxTurns } : {}) },
-        { reviewPullRequest: (ref, deps) => reviewPullRequest(ref, { ...deps, gh }), log: () => undefined },
+        { gh, reviewPullRequest: (ref, deps) => reviewPullRequest(ref, { ...deps, gh }), log: () => undefined },
       );
 
       expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual(caps);
@@ -270,4 +277,69 @@ describe('reviewPrCommand', () => {
       vi.unstubAllEnvs();
     }
   });
+});
+
+it('seeds real default-branch skills before resolving the review registry and discloses their source', async () => {
+  vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'sk-ant-oat-test');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'vg-review-overlay-')));
+  const repoPath = join(root, 'repo');
+  const worktreePath = join(root, 'wt');
+  const git = (args: string[]) => execa('git', args, { cwd: repoPath });
+  try {
+    await mkdir(repoPath);
+    await git(['init', '-q', '-b', 'main']);
+    await git(['config', 'user.name', 'test']);
+    await git(['config', 'user.email', 'test@local']);
+    const trusted = join(repoPath, '.github/vanguard-skills/trusted-review');
+    await mkdir(trusted, { recursive: true });
+    await writeFile(join(trusted, 'SKILL.md'), '---\nname: trusted-review\ndescription: trusted\n---\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'trusted']);
+    await git(['checkout', '-qb', 'release']);
+    await git(['rm', '-qr', '.github']);
+    const evil = join(repoPath, '.github/vanguard-skills/base-only');
+    await mkdir(evil, { recursive: true });
+    await writeFile(join(evil, 'SKILL.md'), '---\nname: base-only\ndescription: evil\n---\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'base']);
+    await git(['worktree', 'add', '-qb', 'review', worktreePath]);
+    vi.mocked(prepareContext).mockImplementationOnce(async (_opts, deps) => {
+      await deps?.seedWorktree?.(worktreePath);
+      if (typeof deps?.skills !== 'function') throw new Error('expected skill resolver');
+      const registry = await deps.skills(worktreePath);
+      const copyIn = vi.fn(async () => undefined);
+      await registry.inject(['trusted-review'], { copyIn } as never);
+      expect(copyIn).toHaveBeenCalledWith(join(worktreePath, '.github/vanguard-skills/trusted-review'), '/workspace/.vanguard/skills/trusted-review');
+      await expect(registry.inject(['base-only'], { copyIn } as never)).rejects.toThrow('Unknown skill');
+      return {} as never;
+    });
+    vi.mocked(runAgent).mockResolvedValue({ completed: true, finalText: 'No blocking findings.' } as never);
+    await reviewPrCommand({ kind: 'review-pr', prRef: '12', repoPath, egress: false }, {
+      gh: async () => JSON.stringify({ defaultBranchRef: { name: 'main' } }),
+      reviewPullRequest: async (_ref, deps) => {
+        await deps.reviewer({ ...fakeResult().pr, baseRefName: 'release' }, { isRetry: false });
+        return fakeResult();
+      },
+      log: () => undefined,
+    });
+    expect(vi.mocked(runAgent).mock.calls.at(-1)?.[1].variables?.PROMPT).toContain('were taken from the default branch main');
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('a failed default-branch API call posts neither a verdict nor an incomplete notice', async () => {
+  vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'sk-ant-oat-test');
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    if (args[0] === 'repo') throw new Error('repo view failed');
+    if (args[1] === 'view') return JSON.stringify({ number: 12, baseRefName: 'release' });
+    return '';
+  };
+  try {
+    await expect(reviewPrCommand({ kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: false }, { gh, log: () => undefined })).rejects.toThrow('Cannot establish the repository default branch');
+    expect(calls.some((args) => args[1] === 'review' || args[1] === 'comment')).toBe(false);
+  } finally { vi.unstubAllEnvs(); }
 });

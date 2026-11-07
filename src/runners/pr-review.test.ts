@@ -560,3 +560,16 @@ describe('buildPullRequestReviewIncompleteComment', () => {
     expect(comment).not.toContain('vanguard-pr-review:');
   });
 });
+
+import { instructionSourceNote } from './review-prompt.js';
+it('places trusted instruction disclosure in the first authoritative block only when supplied', () => {
+  const change = prForReview();
+  const instructions = { ref: 'main', sha: 'abcdef012345', written: [], removed: [], differing: ['src/<odd>/CLAUDE.md'] };
+  const note = instructionSourceNote({ ...instructions, baseRefName: change.baseRefName });
+  const plain = buildPullRequestReviewPrompt(change);
+  const overlaid = buildPullRequestReviewPrompt(change, { instructions });
+  const firstBlock = overlaid.slice(overlaid.indexOf('<task_instructions>'), overlaid.indexOf('</task_instructions>'));
+  expect(firstBlock).toContain(note);
+  expect(overlaid.indexOf(note)).toBeLessThan(overlaid.indexOf('<pr_metadata>'));
+  expect(overlaid.replace(note + '\n', '')).toBe(plain);
+});

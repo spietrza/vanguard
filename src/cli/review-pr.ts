@@ -1,3 +1,7 @@
+import { githubDefaultBranch, defaultGhRunner } from '../tasks/github.js';
+import type { GhRunner } from '../tasks/github.js';
+import { overlayInstructionFiles } from '../context/instruction-files.js';
+import type { InstructionOverlay } from '../context/instruction-files.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
@@ -29,6 +33,7 @@ export const PR_REVIEW_TOOLS: readonly string[] = ['Read', 'Grep', 'Glob'];
 type ReviewPullRequestRunner = (ref: string, deps: ReviewPullRequestDeps) => Promise<ReviewPullRequestResult>;
 
 export interface ReviewPrCommandDeps {
+  gh?: GhRunner;
   reviewer?: PullRequestReviewer;
   reviewPullRequest?: ReviewPullRequestRunner;
   log?: (line: string) => void;
@@ -78,6 +83,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
       await deliver(
         await runReview(cmd.prRef, {
           reviewer,
+          ...(deps.gh !== undefined ? { gh: deps.gh } : {}),
           log,
           publish: !toFile,
           ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
@@ -109,7 +115,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
   });
   try {
-    await runAndDeliver((pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts, outcomes));
+    await runAndDeliver((pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts, outcomes, deps.gh ?? defaultGhRunner));
   } finally {
     await sandboxContext.destroy();
   }
@@ -122,6 +128,7 @@ async function runDefaultReviewer(
   sandboxContext: SandboxContext,
   opts: PullRequestReviewAttempt,
   outcomes: SummaryOutcome[],
+  gh: GhRunner,
 ): Promise<PullRequestReviewOutcome> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
 
@@ -146,17 +153,21 @@ async function runDefaultReviewer(
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
     // The reviewer reads the tree the change lands on: the PR's base as origin has it.
     const baseBranch = baseBranchOrDefault(pr.baseRefName, `PR ${pr.repoSlug}#${pr.number}`);
+    const instructionRef = await githubDefaultBranch(pr.repoSlug, gh);
+    let overlay: InstructionOverlay | undefined;
     const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch, start: 'base' }, {
-      // Repo skills come from the worktree (the base as origin has it), never from the host checkout,
-      // which may hold the change under review: it must not be able to rewrite its own reviewer's skills.
+      // Load repo skills after the trusted default-branch instructions have been overlaid.
       skills: (worktreePath) => skillRegistryForRun(cmd.skillsDir, worktreePath),
+      ...(instructionRef !== baseBranch ? { seedWorktree: async (worktreePath: string) => {
+        overlay = await overlayInstructionFiles({ repoPath: cmd.repoPath, worktreePath, ref: instructionRef });
+      } } : {}),
     });
     const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {
         stageName: 'pr-review',
         agent: agents.agent,
-        ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry })),
+        ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry, ...(overlay !== undefined ? { instructions: overlay } : {}) })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
         maxTurns: opts.isRetry ? Math.min(Math.ceil(baseTurns * 1.5), Number.MAX_SAFE_INTEGER) : baseTurns,
