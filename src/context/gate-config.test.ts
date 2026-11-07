@@ -21,6 +21,7 @@ describe('gate config detection', () => {
     'pytest.ini',
     '.coveragerc',
     '.vanguard/gate-config.json',
+    '.vanguard/approver.json',
   ])('matches the built-in glob for %s', (path) => {
     expect(gateConfigPaths([{ path }])).toEqual([path]);
   });
@@ -48,6 +49,23 @@ describe('gate config detection', () => {
 
   it.each(['verify', 'test', 'lint', 'typecheck'])('matches package.json only when scripts.%s changes', (key) => {
     expect(gateConfigPaths([{ path: 'package.json', patch: `+    "${key}": "new command"` }])).toEqual(['package.json']);
+  });
+
+  it.each([
+    ['a lifecycle hook npm runs before test', '+    "pretest": "node setup.js",'],
+    ['a lifecycle hook npm runs after lint', '-    "postlint": "node check.js",'],
+    ['a script a gate delegates to', '+    "test:unit": "vitest run --passWithNoTests",'],
+  ])('matches package.json on %s', (_label, patch) => {
+    expect(gateConfigPaths([{ path: 'package.json', patch }])).toEqual(['package.json']);
+  });
+
+  it.each([
+    ['a version field', '+  "version": "1.2.3",'],
+    ['a range dependency', '+    "vitest": "^4.0.0",'],
+    ['a workspace dependency', '+    "@taskcell/core": "workspace:*",'],
+    ['the package manager pin', '+  "packageManager": "pnpm@10.0.0",'],
+  ])('does not match package.json on %s', (_label, patch) => {
+    expect(gateConfigPaths([{ path: 'package.json', patch }])).toEqual([]);
   });
 
   it('does not match package.json on a plain dependency bump', () => {
