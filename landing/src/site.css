@@ -85,7 +85,9 @@ p { max-width: 62ch; }
 
 /* ---------- hero ---------- */
 .hero { align-items: stretch; min-height: calc(100svh - 72px); }
-.hero-copy { grid-column: 1 / 6; align-self: end; padding: 40px 0 24px; }
+/* Content height on desktop: a full-viewport hero left 250 px of air above the headline. */
+@media (min-width: 901px) { .hero { min-height: 0; } }
+.hero-copy { grid-column: 1 / 6; align-self: center; padding: 72px 0 24px; }
 .hero h1 { font-size: var(--step-display); }
 .hero h1 span { display: block; }
 .hero h1 .dim { color: var(--muted); }
@@ -297,6 +299,11 @@ p { max-width: 62ch; }
   .fs-label { display: none; padding: 15px 9px; }
   .fs-label[data-station="intake"], .fs-label[data-station="cells"], .fs-label[data-station="outbound"] { display: flex; }
   .links .btn.small { padding: 16px; }
+  /* Wider than tall: the 4:5 box left ~400 px of empty floor under the scene. */
+  .floor-hero { aspect-ratio: 5 / 4; }
+  /* The PR dock sits on the right edge; pull its label inward so it is not cut. */
+  .fs-label[data-station="outbound"] { translate: -24px 0; }
+  .fs-label[data-station="cells"] { translate: 0 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
