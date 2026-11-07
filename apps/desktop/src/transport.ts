@@ -10,7 +10,7 @@ import {
   decodeEvent,
   STREAM_RESET_EVENT,
   HUB_TOKEN_HEADER,
-  HUB_TOKEN_QUERY_PARAM,
+  HUB_EVENTS_SESSION_PATH,
   HUB_TOKEN_FRAGMENT_PARAM,
   isHubTokenRejected,
 } from './hub-wire';
@@ -122,7 +122,7 @@ export function onHubConnectionIssue(handler: () => void): Promise<UnlistenFn> {
  * just died, which is `onHubConnectionIssue`'s neutral signal instead. */
 async function probeHubRestart(): Promise<boolean> {
   try {
-    const response = await fetch(`/events?${HUB_TOKEN_QUERY_PARAM}=${encodeURIComponent(hubToken())}`);
+    const response = await fetch('/events');
     if (response.status !== 401) {
       void response.body?.cancel();
       return false;
@@ -161,9 +161,12 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
   return isHubMode() ? hubInvoke<T>(cmd, args) : tauriInvoke<T>(cmd, args);
 }
 
-/** One lazily created `EventSource('/events?token=…')` shared by every `subscribe()` call, routed by
- * event name. Module-level so every caller — regardless of which component mounted first — shares it. */
+/** One lazily created `EventSource('/events')` shared by every `subscribe()` call, routed by event
+ * name. Module-level so every caller — regardless of which component mounted first — shares it. It
+ * authenticates with the cookie `POST /events/session` sets (hub-wire.ts), so the token never goes
+ * into the URL; `hubSourceOpening` covers the gap while that request is in flight. */
 let hubSource: EventSource | undefined;
+let hubSourceOpening = false;
 interface HubSubscription {
   listener: (ev: MessageEvent) => void;
   handlers: Set<(event: { payload: unknown }) => void>;
@@ -175,11 +178,43 @@ const hubSubscriptions = new Map<string, HubSubscription>();
  * its own snapshot (e.g. listRuns/listActive) to recover whatever the gap may have dropped (#491). */
 const resyncHandlers = new Set<() => void>();
 
-/** Create the shared `EventSource` on first use and wire its one `stream-reset` listener — attached
- * once per instance, independent of which named subscriptions come and go. */
-function ensureHubSource(): EventSource {
-  if (hubSource) return hubSource;
-  const source = new EventSource(`/events?${HUB_TOKEN_QUERY_PARAM}=${encodeURIComponent(hubToken())}`);
+/** Trade the token for the `/events` cookie. `'restarted'` only for the hub's own token-rejected
+ * 401 (a reload with the new launch URL fixes it); any other non-2xx — a Host-check 403, a reverse
+ * proxy's 502 or 401 — or a network error is `'issue'`. */
+async function openEventsSession(): Promise<'ok' | 'restarted' | 'issue'> {
+  try {
+    const response = await fetch(HUB_EVENTS_SESSION_PATH, { method: 'POST', headers: { [HUB_TOKEN_HEADER]: hubToken() } });
+    if (response.ok) {
+      void response.body?.cancel();
+      return 'ok';
+    }
+    if (response.status === 401 && isHubTokenRejected(await response.json().catch(() => undefined))) return 'restarted';
+    // A 401 body was already read above (stream locked/disturbed); cancelling it would reject unhandled.
+    if (!response.bodyUsed) void response.body?.cancel().catch(() => undefined);
+    return 'issue';
+  } catch {
+    return 'issue';
+  }
+}
+
+/** Open the shared `EventSource` on first use (after its cookie) and wire its one `stream-reset`
+ * listener — attached once per instance, independent of which named subscriptions come and go.
+ * Subscriptions registered while the session request is in flight are attached when it opens. A
+ * failed session request notifies instead of opening; the next subscribe retries it. */
+function ensureHubSource(): void {
+  if (hubSource || hubSourceOpening) return;
+  hubSourceOpening = true;
+  void openEventsSession().then((outcome) => {
+    hubSourceOpening = false;
+    if (outcome === 'restarted') return notifyHubRestarted();
+    if (outcome === 'issue') return notifyHubConnectionIssue();
+    if (hubSubscriptions.size === 0 && resyncHandlers.size === 0) return;
+    openHubSource();
+  });
+}
+
+function openHubSource(): void {
+  const source = new EventSource('/events');
   source.addEventListener(STREAM_RESET_EVENT, () => {
     for (const h of resyncHandlers) h();
   });
@@ -193,8 +228,8 @@ function ensureHubSource(): EventSource {
       else notifyHubConnectionIssue();
     });
   });
+  for (const [name, sub] of hubSubscriptions) source.addEventListener(name, sub.listener);
   hubSource = source;
-  return source;
 }
 
 /** Close the shared `EventSource` once nothing — named subscription or resync callback — still needs it. */
@@ -206,7 +241,7 @@ function closeHubSourceIfIdle(): void {
 }
 
 function hubSubscribe<T>(name: string, handler: (event: { payload: T }) => void): Promise<UnlistenFn> {
-  const source = ensureHubSource();
+  ensureHubSource();
   let sub = hubSubscriptions.get(name);
   if (!sub) {
     const handlers = new Set<(event: { payload: unknown }) => void>();
@@ -218,7 +253,7 @@ function hubSubscribe<T>(name: string, handler: (event: { payload: T }) => void)
     };
     sub = { listener, handlers };
     hubSubscriptions.set(name, sub);
-    source.addEventListener(name, listener);
+    hubSource?.addEventListener(name, listener);
   }
   sub.handlers.add(handler as (event: { payload: unknown }) => void);
 

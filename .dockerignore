@@ -1,7 +1,32 @@
-node_modules
-dist
+# Build context for docker/runner.Dockerfile and docker/hub.Dockerfile (`COPY . .`). The image needs
+# only the sources, manifests and lockfiles: secrets, VCS state, local tooling and build output stay out
+# of the layers. Secrets reach the containers at runtime (compose `environment:` / `env_file`, `-e`).
+
+# secrets: operator .env (repo root or next to docker/compose.yaml) and any variant
+**/.env
+**/.env.*
+*.pem
+*.key
+*.p12
+**/id_rsa*
+
+# VCS, run records, worktrees, local tool state
 .git
 .vanguard
+.claude
+.gstack
+.idea
+.vscode
+**/worktrees
+
+# deps and build output (rebuilt inside the image)
+**/node_modules
+dist
+apps/desktop/dist
+apps/desktop/src-tauri/target
+coverage
 *.log
+
+# deployment artifacts that are not image inputs
 docker/sbom.spdx.json
 docker/target-repo
