@@ -2,7 +2,7 @@ import { execa } from 'execa';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { request } from 'node:http';
+import { Agent, request } from 'node:http';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { hubCommand } from './hub.js';
 import { loadPaths } from '../hub/projects.js';
@@ -134,9 +134,12 @@ describe('hubCommand', () => {
       // interface), so — unlike the `127.0.0.1`-bound tests — connect to the hostname itself, not
       // to loopback, to reach the socket the printed URL names.
       const { port } = new URL(url);
+      // Own agent, not globalAgent: with NODE_USE_ENV_PROXY=1 (CI sandboxes set HTTP_PROXY) the global
+      // one tunnels this hostname through the egress proxy, which answers 405 and the hub never sees
+      // the request. A fresh Agent carries no proxy env, so the socket goes straight to the hub.
       const get = (path: string): Promise<{ status: number; body: string }> =>
         new Promise((resolve, reject) => {
-          const req = request({ host, port, path }, (res) => {
+          const req = request({ host, port, path, agent: new Agent() }, (res) => {
             let body = '';
             res.setEncoding('utf8');
             res.on('data', (chunk: string) => { body += chunk; });

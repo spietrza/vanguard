@@ -55,7 +55,7 @@ import { authSecrets } from '../agents/auth.js';
 import { selectAgents, providerKeyEnvNames } from '../agents/registry.js';
 import { GITHUB_REVIEW_LABEL } from '../github-labels.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import { VanguardError, isRateLimitError, rateLimitRetryNotice } from '../core/errors.js';
+import { AgentError, VanguardError, isRateLimitError, rateLimitRetryNotice } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestForReview } from './pr-review.js';
 import type { CommandRunner } from '../pipeline/remote-branch.js';
@@ -627,6 +627,20 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       };
     } catch (error) {
       await stepSummary('error', { error: String(error) });
+      // A rate limit that no fallback rescued ends the round with the PR still carrying
+      // `vanguard:revising` and nothing said on it, so the work sits until someone notices (#615).
+      // Say what happened and drop the in-flight label, leaving `needs revision` in place: the retry
+      // is the human removing and re-applying it (the revise workflow triggers on that label event).
+      // Best-effort — neither the notice nor the label edit may mask the original failure. --out is a
+      // dry run that touches neither the branch nor the PR. Gated on AgentError (same test as
+      // pipeline.ts): a `gh`/git failure carrying GitHub's own "API rate limit exceeded" is not the
+      // provider, and the notice would misname it — and after a successful push it would invite a
+      // pointless second round.
+      if (error instanceof AgentError && isRateLimitError(error) && deps.out === undefined) {
+        log(`revise-pr ${target.repoSlug}#${target.number}: provider rate-limited (429), posting notice`);
+        await postPullRequestReview(target, rateLimitRetryNotice(NEEDS_REVISION_LABEL), 'comment', gh).catch(() => undefined);
+        await editPrLabels(gh, target.repoSlug, target.number, { remove: [VANGUARD_REVISING_LABEL] }).catch(() => undefined);
+      }
       throw error;
     } finally {
       await disposeContext(ctx);
