@@ -152,7 +152,8 @@ export interface RemoteBranchInfo {
 export type RemoteBranchLister = () => Promise<RemoteBranchInfo[]>;
 export type MergedChecker = (branch: string, tipSha?: string) => Promise<boolean>;
 export type AbandonedChecker = (branch: string, tipSha?: string) => Promise<boolean>;
-export type RemoteBranchRemover = (branch: string) => Promise<void>;
+/** `tipSha`: the tip the decision was made on; the delete is leased on it, so a branch that moved is kept. */
+export type RemoteBranchRemover = (branch: string, tipSha?: string) => Promise<void>;
 
 export type ReapBranchOpts =
   | { abandoned?: false; isAbandoned?: never }
@@ -186,15 +187,15 @@ export async function reapRemoteBranches(
   opts?: ReapBranchOpts,
 ): Promise<string[]> {
   const aged = (await lister()).filter((branch) => branch.ageMs > maxAgeMs);
-  const names = (
+  const reaped = (
     await mapLimit(aged, PR_CHECK_CONCURRENCY, async (branch) => {
-      if (await isMerged(branch.name, branch.sha)) return branch.name;
-      if (opts?.abandoned && (await opts.isAbandoned(branch.name, branch.sha))) return branch.name;
+      if (await isMerged(branch.name, branch.sha)) return branch;
+      if (opts?.abandoned && (await opts.isAbandoned(branch.name, branch.sha))) return branch;
       return null;
     })
-  ).filter((name): name is string => name !== null);
-  await Promise.all(names.map(remover));
-  return names;
+  ).filter((branch): branch is RemoteBranchInfo => branch !== null);
+  await Promise.all(reaped.map((branch) => remover(branch.name, branch.sha)));
+  return reaped.map((branch) => branch.name);
 }
 
 /** Git-backed lister of remote `vanguard/*` branches with their age (from the last commit date). */
@@ -213,17 +214,29 @@ export function gitRemoteBranchLister(
       ['for-each-ref', '--format', '%(refname:short)\t%(committerdate:unix)\t%(objectname)', `refs/remotes/${remote}/${prefix}*`],
       { cwd: repoPath },
     );
+    // Tracking refs can be stale: the tip a PR is matched against (and the delete lease) comes from the
+    // remote itself. ls-remote failing keeps every branch.
+    const live = await execa('git', ['ls-remote', '--heads', remote], { cwd: repoPath, reject: false });
+    if (live.exitCode !== 0) return [];
+    const liveTips = new Map<string, string>();
+    for (const line of live.stdout.split('\n')) {
+      const [sha = '', ref = ''] = line.split('\t');
+      if (ref.startsWith('refs/heads/') && sha !== '') liveTips.set(ref.slice('refs/heads/'.length), sha);
+    }
     return stdout
       .split('\n')
-      .map((line): RemoteBranchInfo => {
-        const [short = '', unix, sha] = line.split('\t');
+      .map((line): RemoteBranchInfo | undefined => {
+        const [short = '', unix, localSha] = line.split('\t');
         // refname:short is `<remote>/vanguard/<x>`; strip the remote so the name works with gh/push.
         const name = short.startsWith(`${remote}/`) ? short.slice(remote.length + 1) : short;
+        const sha = liveTips.get(name);
+        if (name === '' || sha === undefined) return undefined; // already gone on the remote
         const created = Number(unix) * 1000;
-        const ageMs = Number.isFinite(created) ? now() - created : 0; // unparseable date -> treat as new (keep)
-        return { name, ageMs, ...(sha !== undefined && sha !== '' ? { sha } : {}) };
+        // Unparseable date, or the remote moved past the local tracking ref (age unknown) -> treat as new (keep).
+        const ageMs = Number.isFinite(created) && sha === localSha ? now() - created : 0;
+        return { name, ageMs, sha };
       })
-      .filter((branch) => branch.name !== '');
+      .filter((branch): branch is RemoteBranchInfo => branch !== undefined);
   };
 }
 
@@ -271,7 +284,10 @@ export function ghAbandonedPrChecker(repoPath: string, repoSlug?: string): Aband
 
 /** Git-backed remover that deletes the branch on the remote (ignores missing). */
 export function gitRemoteBranchRemover(repoPath: string, remote: string = 'origin'): RemoteBranchRemover {
-  return async (branch: string): Promise<void> => {
-    await execa('git', ['push', remote, '--delete', branch], { cwd: repoPath, reject: false });
+  return async (branch: string, tipSha?: string): Promise<void> => {
+    const ref = `refs/heads/${branch}`;
+    // Leased on the checked tip: a push between the check and the delete makes the remote refuse it.
+    const args = tipSha !== undefined ? ['push', `--force-with-lease=${ref}:${tipSha}`, remote, `:${ref}`] : ['push', remote, '--delete', ref];
+    await execa('git', args, { cwd: repoPath, reject: false });
   };
 }
