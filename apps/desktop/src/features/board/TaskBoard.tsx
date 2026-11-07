@@ -17,6 +17,12 @@ type Column = {
   pulse?: boolean;
 };
 
+const CHIP_TONE: Record<string, string> = {
+  pass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+  changes: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+  failed: 'bg-rose-500/15 text-rose-700 dark:text-rose-300',
+};
+
 const COLUMNS: Column[] = [
   { key: 'queued', label: 'Queued', dot: 'bg-slate-400', pill: 'bg-slate-400/15 text-slate-600 dark:text-slate-300', lane: 'bg-slate-400/[0.06]', cardHover: 'hover:border-slate-400' },
   { key: 'claimed', label: 'Claimed', dot: 'bg-amber-500', pill: 'bg-amber-500/15 text-amber-700 dark:text-amber-300', lane: 'bg-amber-500/[0.06]', cardHover: 'hover:border-amber-500' },
@@ -105,6 +111,12 @@ export function TaskBoard({
                         <Card.Content className="space-y-1.5 p-3">
                           <div className="font-mono text-[11px] font-medium text-muted-foreground">{t.id}</div>
                           <div className="text-sm leading-snug">{t.title}</div>
+                          {t.column === 'running' && t.stage && <div className="font-mono text-[11px]">stage: {t.stage}</div>}
+                          {(t.column === 'review' || t.column === 'done') && !!t.chips?.length && (
+                            <div className="flex flex-wrap gap-1">
+                              {t.chips.map((chip) => <span key={chip.key} className={cn('rounded px-1.5 py-0.5 text-[11px]', Object.hasOwn(CHIP_TONE, chip.tone) ? CHIP_TONE[chip.tone] : 'bg-slate-400/15 text-muted-foreground')}>{chip.label}</span>)}
+                            </div>
+                          )}
                           {t.state && t.state !== col.key && (
                             <div className="pt-0.5 text-[11px] text-muted-foreground">{t.state}</div>
                           )}

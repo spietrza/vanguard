@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { columnFor, isTriggerLabel, mintBoardId, resolveTaskRef, toBoardTask } from './board.js';
+import { columnFor, isTriggerLabel, mintBoardId, resolveTaskRef, taskRefKey, toBoardTask } from './board.js';
 import { boardFilterFor, BOARD_FETCH_CAP, fetchTaskSpec, listBoardTasks, readBoardConfig } from './board-list.js';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -240,5 +240,40 @@ describe('board-visible errors', () => {
     const err = await listBoardTasks(repo, async () => failing).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(VanguardError);
     expect((err as Error).message).toBe('To get started with GitHub CLI, please run: gh auth login');
+  });
+});
+
+/**
+ * T19: taskRefKey table — a board id and a run-record taskId fold to ONE key (`gh-904`,
+ * `linear-dev-639`); unresolvable input is returned lowercased. The table is the same one
+ * apps/desktop/src/features/board/taskref.test.ts asserts for the desktop mirror, so core and the
+ * renderer can never silently drift apart.
+ */
+const TASK_REF_KEY_TABLE: ReadonlyArray<readonly [string, string]> = [
+  ['gh-904', 'gh-904'],
+  ['gh-owner-repo-904', 'gh-904'],
+  ['gl-42', 'gl-42'],
+  ['gl-group-proj-42', 'gl-42'],
+  ['linear-dev-639', 'linear-dev-639'],
+  ['LINEAR-DEV-639', 'linear-dev-639'],
+  ['Unknown', 'unknown'],
+];
+
+describe('taskRefKey (T19)', () => {
+  it('T19: folds board ids and run-record taskIds to one key per the desktop mirror table', () => {
+    for (const [id, expected] of TASK_REF_KEY_TABLE) {
+      expect(taskRefKey(id)).toBe(expected);
+    }
+  });
+
+  it('T19: a board id matches the run-record taskId minted for the same issue', () => {
+    expect(taskRefKey('gh-904')).toBe(taskRefKey('gh-owner-repo-904'));
+    expect(taskRefKey('gl-42')).toBe(taskRefKey('gl-group-proj-42'));
+    expect(taskRefKey('linear-dev-639')).toBe(taskRefKey('LINEAR-DEV-639'));
+  });
+
+  it('T19: unresolvable input is returned lowercased, never thrown', () => {
+    expect(taskRefKey('Unknown')).toBe('unknown');
+    expect(taskRefKey('gh-')).toBe('gh-');
   });
 });

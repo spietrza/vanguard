@@ -1,3 +1,5 @@
+import { clearStageMarker, writeStageMarker } from '../core/run-stage-marker.js';
+import { reviewVerdictLine, reviewVerdictOf } from '../pipeline/review-verdict.js';
 import { trustedSpecText, isTrustedComment } from '../tasks/comment-trust.js';
 import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
@@ -428,6 +430,7 @@ export async function runSourcedIssue(
         ...extra,
       });
     };
+    let markerWrites = Promise.resolve();
     try {
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
@@ -477,7 +480,20 @@ export async function runSourcedIssue(
       // every stage record share one prefix and the hub/desktop readers can match a run's proof to
       // its stage records by name.
       const writer = beginRun(deps.repoPath, adapter.taskId(task), undefined, { secretEnvVars: providerKeyEnvNames(deps) });
-      deps.onEvent?.({
+      const onEvent = (event: RunEvent): void => {
+        markerWrites = markerWrites.then(async () => {
+          if (event.type === 'stage-start') {
+            await writeStageMarker(deps.repoPath, {
+              taskId: adapter.taskId(task), stage: event.name, index: event.index, of: event.of,
+              updatedAt: new Date().toISOString(),
+            });
+          } else if (event.type === 'run-end' || event.type === 'run-error' || event.type === 'run-cancelled') {
+            await clearStageMarker(deps.repoPath, adapter.taskId(task));
+          }
+        }).catch(() => undefined);
+        deps.onEvent?.(event);
+      };
+      onEvent({
         type: 'run-start',
         taskId: adapter.taskId(task),
         ...runMeta,
@@ -493,7 +509,7 @@ export async function runSourcedIssue(
         ...(deps.forkN !== undefined
           ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent), ...(forkScore !== undefined ? { score: forkScore } : {}) } }
           : {}),
-        ...(deps.onEvent !== undefined ? { onEvent: deps.onEvent } : {}),
+        onEvent,
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
       // Deterministic spec-manifest vs diff conformance gate, joined with the verify command into a
@@ -599,6 +615,7 @@ export async function runSourcedIssue(
       // no automated proof-of-work blocks — so the PR reads like a plain human PR.
       const scope = primaryModuleScope(manifest);
       const bugLabel = task.labels.includes('bug');
+      const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
       const delivery = await deliverChange(ctx, {
         taskId: task.id,
         // Default and white-label share the same type/scope logic as the PR title (conventionalPrTitle):
@@ -629,6 +646,7 @@ export async function runSourcedIssue(
                 commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
                 verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
                 visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
+                reviewerOutcome !== undefined ? reviewVerdictLine(reviewVerdictOf(reviewerOutcome.result.finalText)) : undefined,
               ].filter((s): s is string => s !== undefined).join('\n\n'),
         },
       });
@@ -639,13 +657,13 @@ export async function runSourcedIssue(
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr + run record.
         if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, delivery.block);
-        deps.onEvent?.({ type: 'run-end', secretBlocked: true });
+        onEvent({ type: 'run-end', secretBlocked: true });
         return { task, secretBlocked: true };
       }
       if (delivery.kind === 'no-changes') {
         await writer.writeStages(outcomes, runMeta);
         await stepSummary('no-changes');
-        deps.onEvent?.({ type: 'run-end' });
+        onEvent({ type: 'run-end' });
         return { task };
       }
       if (delivery.kind !== 'delivered-pr') throw new VanguardError(`unexpected delivery outcome ${delivery.kind} for a new-pr target`);
@@ -658,7 +676,6 @@ export async function runSourcedIssue(
       // conformance on a reviewer-less flow — so this skip can never swallow a conformance narrative.)
       const pipelineHasReviewer = pipeline.some((s) => s.name === STAGE.REVIEWER);
       if (!whiteLabel && pipelineHasReviewer) {
-        const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({
           prUrl: pr.prUrl,
@@ -675,7 +692,7 @@ export async function runSourcedIssue(
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProofFailed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
       if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
-      deps.onEvent?.({ type: 'run-end', prUrl: pr.prUrl });
+      onEvent({ type: 'run-end', prUrl: pr.prUrl });
       return { task, prUrl: pr.prUrl };
     } catch (error) {
       await stepSummary('error', { error: String(error) });
@@ -684,6 +701,8 @@ export async function runSourcedIssue(
       await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
         console.error('retrospective memory refresh failed (non-fatal):', err);
       });
+      await markerWrites;
+      await clearStageMarker(deps.repoPath, adapter.taskId(task)).catch(() => undefined);
       await disposeContext(ctx);
     }
   } finally {
