@@ -10,6 +10,8 @@ import {
 
 const FAKE_JWT = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
 const FAKE_SK_KEY = 'sk-FAKEtestkeyABCDEFGHIJ1234567890';
+// 25 chars, mixes letters/digits/separators — long and varied enough to be credential-shaped.
+const BEARER_CREDENTIAL = 'Ab1' + '.De_2-'.repeat(3) + 'xyz9';
 
 function diffOf(files: { path: string; lines: string[] }[]): string {
   return files
@@ -33,13 +35,18 @@ describe('redactTokens', () => {
 
   it('redacts JWTs, Bearer headers, and token JSON fields (unchanged from codex.ts)', () => {
     expect(redactTokens(`got ${FAKE_JWT} here`)).toBe('got [REDACTED-JWT] here');
-    expect(redactTokens('Authorization: Bearer sk-abc.DEF_123-xyz')).toBe('Authorization: Bearer [REDACTED]');
+    expect(redactTokens(`Authorization: Bearer ${BEARER_CREDENTIAL}`)).toBe('Authorization: Bearer [REDACTED]');
     expect(redactTokens('{"refresh_token":"rt_secret_value","x":1}')).toBe('{"refresh_token":"[REDACTED]","x":1}');
     expect(redactTokens('{"access_token": "at_secret"}')).toBe('{"access_token": "[REDACTED]"}');
   });
 
   it('leaves non-credential text untouched', () => {
     expect(redactTokens('account is not active')).toBe('account is not active');
+  });
+
+  it('masks a Bearer value under header shapes that carry no literal `Authorization:` prefix', () => {
+    expect(redactTokens(`Authorization=Bearer ${BEARER_CREDENTIAL}`)).toBe('Authorization=Bearer [REDACTED]');
+    expect(redactTokens(`{"authorization": "Bearer ${BEARER_CREDENTIAL}"}`)).toBe('{"authorization": "Bearer [REDACTED]"}');
   });
 
   it('redacts URL userinfo, bare GitHub/GitLab tokens and Basic auth — the shapes git and gh print into errors', () => {
@@ -87,7 +94,7 @@ describe('scanForSecrets', () => {
   });
 
   it('detects a Bearer header on an added line', () => {
-    const diff = diffOf([{ path: 'src/foo.ts', lines: ['+const h = "Authorization: Bearer sk-abc.DEF_123-xyz";'] }]);
+    const diff = diffOf([{ path: 'src/foo.ts', lines: [`+const h = "Authorization: Bearer ${BEARER_CREDENTIAL}";`] }]);
     const findings = scanForSecrets(diff);
     expect(findings).toContainEqual(
       expect.objectContaining({ file: 'src/foo.ts', patternName: 'bearer' }),
@@ -203,6 +210,74 @@ describe('scanForSecrets', () => {
   });
 });
 
+describe('bearer: credential-shaped values only (#625)', () => {
+  it.each([
+    'plain bearer token',
+    'bearer credentials',
+    'the bearer credential',
+    'Bearer tokens',
+    'bearer internationalization',
+  ])('does not treat %j as a bearer finding', (line) => {
+    const diff = diffOf([{ path: 'src/foo.ts', lines: [`+const note = "${line}";`] }]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'bearer')).toBe(false);
+  });
+
+  it.each(['abc.def.ghi', 'sk-abc.DEF_123-xyz', 'abcdefghijklmnopqrstuvwxyz'])('protects explicit headers with %s', (credential) => {
+    const line = `Authorization: Bearer ${credential}`;
+    expect(redactTokens(line)).toBe('Authorization: Bearer [REDACTED]');
+    expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+${line}`] }])))
+      .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
+  it('redaction stays broad: short and letters-only values are masked even where the gate ignores them', () => {
+    const short = ['ab', 'c'].join('');
+    expect(redactTokens(`Bearer ${short}`)).toBe('Bearer [REDACTED]');
+    expect(redactTokens(`Authorization=Bearer ${short}`)).toBe('Authorization=Bearer [REDACTED]');
+    expect(redactTokens(`{"authorization": "Bearer ${short}"}`)).toBe('{"authorization": "Bearer [REDACTED]"}');
+    expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+const h = "Authorization=Bearer ${short}";`] }])))
+      .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
+  it('a repeated scheme word is not taken as the value', () => {
+    const tok = 'a1b2c3d4'.repeat(4);
+    expect(redactTokens(`Bearer Bearer ${tok}`)).toBe('Bearer Bearer [REDACTED]');
+    expect(redactTokens(`Authorization: Bearer Bearer ${tok}`)).toBe('Authorization: Bearer Bearer [REDACTED]');
+    expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+const h = "Bearer Bearer ${tok}";`] }])))
+      .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
+  it('masks a standard-base64 token whole, padding and all (no `+/w==` tail left behind)', () => {
+    const token = 'YWJjZGVmZ2hpamtsbW5vcHE+/w==';
+    expect(redactTokens(`Authorization: Bearer ${token}`)).toBe('Authorization: Bearer [REDACTED]');
+    expect(redactTokens(`Bearer ${token}`)).toBe('Bearer [REDACTED]');
+  });
+
+  it('protects bare credential values', () => {
+    const line = `Bearer ${BEARER_CREDENTIAL}`;
+    expect(redactTokens(line)).toBe('Bearer [REDACTED]');
+    expect(scanForSecrets(diffOf([{ path: 'src/foo.ts', lines: [`+${line}`] }])))
+      .toContainEqual(expect.objectContaining({ patternName: 'bearer' }));
+  });
+
+  it.each([
+    ['32-char hex', 'a1b2c3d4'.repeat(4), 32],
+    ['40-char base64url', 'A1b2-C3d4_E5f6'.repeat(3).slice(0, 40), 40],
+  ] as const)('still redacts a %s token after Authorization: Bearer', (_name, token, length) => {
+    expect(token).toHaveLength(length);
+    const line = `Authorization: Bearer ${token}`;
+    expect(redactTokens(line)).toBe('Authorization: Bearer [REDACTED]');
+    const diff = diffOf([{ path: 'src/foo.ts', lines: [`+const h = "${line}";`] }]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/foo.ts', patternName: 'bearer' }),
+    );
+  });
+
+  it('still redacts a JWT after Authorization: Bearer (caught unconditionally by the jwt pattern)', () => {
+    const line = `Authorization: Bearer ${FAKE_JWT}`;
+    expect(redactTokens(line)).toBe('Authorization: Bearer [REDACTED-JWT]');
+  });
+});
+
 describe('python test-path exclusion', () => {
   it('skips a test_*.py file (pytest prefix convention)', () => {
     const diff = diffOf([
@@ -284,7 +359,7 @@ describe('assignment refine: identifier chains', () => {
 
 describe('allowlist marker (global suppression)', () => {
   it.each([
-    ['bearer', '+const h = "Authorization: Bearer sk-abc.DEF_123-xyz"', '// gitleaks:allow'],
+    ['bearer', `+const h = "Authorization: Bearer ${BEARER_CREDENTIAL}"`, '// gitleaks:allow'],
     ['jwt', `+const token = "${FAKE_JWT}"`, '// pragma: allowlist secret'],
     ['openai-key', `+const key = "${FAKE_SK_KEY}"`, '// vanguard-allow-secret'],
     ['json-token-field', '+const payload = {"access_token":"rt_secret_value"}', '// gitleaks:allow'],

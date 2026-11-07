@@ -91,7 +91,19 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // integrity hashes (e.g. pnpm-lock.yaml `integrity: sha512-...eyJ...`), which are content hashes,
   // not secrets. Real JWTs always carry two internal dots; integrity hashes never do.
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, replacement: '[REDACTED-JWT]' },
-  { name: 'bearer', re: /(Bearer\s+)[A-Za-z0-9._-]+/gi, replacement: '$1[REDACTED]' },
+  // The prefix group also takes `Authorization=` and JSON `"authorization": "` shapes. The value class
+  // spans the full base64/base64url alphabet, so a padded token is masked whole (#635).
+  {
+    name: 'bearer',
+    // Broad on purpose: redaction masks every value after the scheme (over-masking a log is
+    // harmless). Prose filtering lives in the gate-only `refine` below.
+    re: /((?:\bAuthorization["']?\s*[:=]\s*["']?)?(?:\bBearer\s+)+)([A-Za-z0-9._~+/=-]+)/gi,
+    replacement: '$1[REDACTED]',
+    // An explicit Authorization header always counts; a bare scheme word counts only before a long
+    // value with a digit or separator, so English prose after it does not block a push.
+    refine: (value: string, prefix?: string): boolean =>
+      /authorization/i.test(prefix ?? '') || (value.length >= 20 && /[0-9._~+/=-]/.test(value)),
+  },
   {
     name: 'json-token-field',
     re: /("(?:access_token|refresh_token|id_token|OPENAI_API_KEY|api_key)"\s*:\s*")[^"]+"/gi,
