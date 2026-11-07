@@ -58,15 +58,27 @@ export function visibleError(error: unknown): VanguardError {
   return new VanguardError(message.split('\n').find((l) => l.trim() !== '') ?? message);
 }
 
-/** Matches a provider rate-limit refusal (HTTP 429, or a textual "rate limit" refusal) embedded verbatim
- *  in an AgentError's message. Distinguishes a transient, retryable condition from every other agent
- *  failure (crash, bad auth, malformed output). */
-const RATE_LIMIT_RE = /\b429\b|rate.?limit/i;
+/**
+ * Provider rate-limit refusals as the providers themselves word them. Deliberately NOT a bare `429`
+ * or a bare "rate limit": an AgentError's message embeds the provider CLI's raw stderr, the tail of
+ * its stdout transcript, or its final assistant text (see claude-stream.ts / cursor.ts), so
+ * agent-authored prose — a diff that discusses rate limiting, a stack frame holding the number 429 —
+ * would otherwise classify a hard failure (crash, bad auth, malformed output) as transient.
+ */
+const RATE_LIMIT_PATTERNS: readonly RegExp[] = [
+  // HTTP 429 in a status/error position: `HTTP 429`, `status code 429`, `API Error: 429`, `"code":429`.
+  /\b(?:http|status(?:[ _-]?code)?|code|error)\b["'\s:=,]{0,4}429\b/i,
+  // The status line with no label in front of it: `429 Too Many Requests`.
+  /\b429\b[\s:-]{0,3}too many requests/i,
+  // The vendors' own refusal strings: Anthropic's `rate_limit_error`, OpenAI's `rate_limit_exceeded`
+  // and "Rate limit reached for <model>".
+  /\brate[_ -]limit(?:_error|_exceeded|\s+(?:exceeded|reached))/i,
+];
 
 /** True when `error` is a provider rate-limit refusal, not some other agent failure. */
 export function isRateLimitError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return RATE_LIMIT_RE.test(message);
+  return RATE_LIMIT_PATTERNS.some((re) => re.test(message));
 }
 
 /**
