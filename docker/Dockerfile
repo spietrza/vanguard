@@ -2,7 +2,7 @@
 # Single stage so the global npm bins and their node_modules stay consistent (the linear-cli
 # launcher resolves a sibling binary, which breaks when bins are copied across build stages).
 # Pinned by digest for a reproducible, tamper-evident base (the tag is kept for readability).
-FROM node:24-bookworm-slim@sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf
+FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 # Exact CLI versions, never `latest`, so a rebuild cannot silently pull a new (or hijacked) release.
 # Bump: `npm view <pkg> version`, update the default here (or pass --build-arg), rebuild, run build.sh.
 ARG CLAUDE_CLI_VERSION=2.1.260
