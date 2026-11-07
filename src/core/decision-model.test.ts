@@ -28,13 +28,17 @@ describe('decisionModelConfig', () => {
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide', VANGUARD_DECISION_TOKEN: 't' })).toBeUndefined();
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide' })).toBeUndefined(); // the state still leaks
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://[2001:db8::1]/decide' })).toBeUndefined();
-    expect(warn).toHaveBeenCalledTimes(3);
+    // A public name that merely starts like a private range is not local.
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://10.attacker.com/decide' })).toBeUndefined();
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://192.168.evil.io/decide' })).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(5);
     expect(decisionModelMissing('clef', { VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide' })).toMatch(/use https/);
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://100.64.0.9:8080/decide', VANGUARD_DECISION_TOKEN: 't' })?.url).toBe('http://100.64.0.9:8080/decide'); // Tailscale
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://localhost:8080/decide', VANGUARD_DECISION_TOKEN: 't' })).toBeDefined();
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://[::1]:8080/decide' })).toBeDefined();
     expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'https://ai-box.example.com/decide', VANGUARD_DECISION_TOKEN: 't' })).toBeDefined();
-    expect(warn).toHaveBeenCalledTimes(3);
+    expect(decisionModelConfig({ VANGUARD_DECISION_URL: 'http://192.168.1.214:8080/decide' })).toBeDefined();
+    expect(warn).toHaveBeenCalledTimes(5);
     warn.mockRestore();
   });
 

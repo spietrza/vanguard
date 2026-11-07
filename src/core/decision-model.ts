@@ -4,6 +4,7 @@
  * questions in, a calibrated probability per allowed answer out, in ~100 ms, no text generation.
  * Used by the log-only difficulty probe, the eval judge and the fork scorer.
  */
+import { isIP } from 'node:net';
 
 /** clef over clef-flash: replaying 11 factory probes (2026-10-21) gave Brier 0.05 vs 0.16 — flash was overconfident. */
 export const DECISION_MODEL_DEFAULT = 'clef';
@@ -83,7 +84,10 @@ function isPlainHttpOffHost(url: string): boolean {
     const u = new URL(url);
     if (u.protocol !== 'http:') return false;
     const h = u.hostname;
-    return !(h === 'localhost' || h === '[::1]' || (!h.includes('.') && !h.startsWith('[')) || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h));
+    if (h === 'localhost' || h === '[::1]' || (!h.includes('.') && !h.startsWith('['))) return false;
+    // Private ranges only for an IP literal: a name like `10.attacker.com` resolves wherever its owner wants.
+    if (isIP(h) !== 4) return true;
+    return !(/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h));
   } catch {
     return false;
   }
