@@ -246,8 +246,9 @@ export interface Finding {
 }
 
 /**
- * Persisted run-record shapes (src/core/run-store.ts and src-tauri/src/runs.rs both produce these; this
- * file pins the hub's TS side so desktop drift fails CI — the Rust side stays a hand-mirror).
+ * Persisted run-record shapes. ONE producer: src/core/run-store.ts — the hub reads it directly and
+ * the desktop forwards `listRuns`/`readRun` over the sidecar pipe, so src-tauri/src/runs.rs keeps no
+ * reader and no hand-mirror of these structs (pinned by `src/wire.test.ts`).
  */
 export interface AgentUsage {
   inputTokens: number;
