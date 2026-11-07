@@ -960,3 +960,60 @@ describe('vanguard.run base resolution (#429)', () => {
     expect(entries.some((e) => e.msg.includes('release is not a commit here'))).toBe(true);
   });
 });
+
+describe('seedWorktree', () => {
+  it('runs after the cut, before start, copyIn and skills', async () => {
+    const { sandbox } = makeSandbox();
+    const calls: string[] = [];
+    sandbox.start = async () => { calls.push('start'); };
+    sandbox.copyIn = async () => { calls.push('copyIn'); };
+    const ctx = await prepareContext({ taskId: 'seed', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, {
+      seedWorktree: async (path) => {
+        expect((await execa('git', ['rev-parse', '--is-inside-work-tree'], { cwd: path })).stdout).toBe('true');
+        await writeFile(join(path, 'seed-marker'), 'seeded');
+        calls.push('seed');
+      },
+      skills: async (path) => {
+        expect(await readFile(join(path, 'seed-marker'), 'utf8')).toBe('seeded');
+        calls.push('skills');
+        return skillRegistryForRun(undefined, path);
+      },
+    });
+    expect(calls.slice(0, 4)).toEqual(['seed', 'start', 'copyIn', 'skills']);
+    await rm(join(ctx.worktreePath, 'seed-marker'));
+    await disposeContext(ctx);
+    expect(existsSync(ctx.worktreePath)).toBe(false);
+  });
+
+  it('propagates seed errors without starting or copying into a sandbox, and orphans no worktree', async () => {
+    const { sandbox } = makeSandbox();
+    sandbox.start = vi.fn();
+    sandbox.copyIn = vi.fn();
+    const error = new Error('seed failed');
+    let seeded = '';
+    await expect(prepareContext({ taskId: 'seed-fail', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, {
+      // A seed that fails part way: the half-written file leaves the worktree dirty.
+      seedWorktree: async (path) => { seeded = path; await writeFile(join(path, 'half-seeded'), 'partial'); throw error; },
+    })).rejects.toBe(error);
+    expect(sandbox.start).not.toHaveBeenCalled();
+    expect(sandbox.copyIn).not.toHaveBeenCalled();
+    expect(existsSync(seeded)).toBe(false);
+    expect((await execa('git', ['worktree', 'list'], { cwd: repo })).stdout).not.toContain(seeded);
+  });
+});
+
+import { overlayInstructionFiles } from '../context/instruction-files.js';
+it('disposes a clean review worktree after committing a changed instruction overlay', async () => {
+  await execa('git', ['checkout', '-qb', 'release'], { cwd: repo });
+  await writeFile(join(repo, 'CLAUDE.md'), 'base-only rules');
+  await execa('git', ['add', '.'], { cwd: repo });
+  await execa('git', ['-c', 'user.name=test', '-c', 'user.email=test@local', 'commit', '-qm', 'base rules'], { cwd: repo });
+  const { sandbox } = makeSandbox();
+  const ctx = await prepareContext({ taskId: 'overlay-dispose', localRepoPath: repo, baseBranch: 'release', start: 'base', sandbox }, {
+    seedWorktree: async (worktreePath) => { await overlayInstructionFiles({ repoPath: repo, worktreePath, ref: 'main' }); },
+  });
+  expect((await execa('git', ['status', '--porcelain'], { cwd: ctx.worktreePath })).stdout).toBe('');
+  expect((await execa('git', ['rev-list', '--count', `${ctx.startRef}..HEAD`], { cwd: ctx.worktreePath })).stdout).toBe('1');
+  await disposeContext(ctx);
+  expect(existsSync(ctx.worktreePath)).toBe(false);
+});

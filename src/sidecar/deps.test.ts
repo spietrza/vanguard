@@ -135,10 +135,12 @@ describe('createRun always runs with the LLM proxy (#584)', () => {
   it('a Claude subscription run is proxied: the runner gets the nonce dep, never the token', async () => {
     const repoPath = await plainRepo();
     const deps = productionDeps();
+    const events: RunEvent[] = [];
     setEnv({ ...NO_CLAUDE, CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-REAL-TOKEN' });
-    await expect(deps.createRun({ issueRef: 'o/r#1', repoPath, provider: 'claude' }, () => {})).resolves.toEqual({
-      prUrl: 'https://example/pr/1',
-    });
+    await expect(
+      deps.createRun({ issueRef: 'o/r#1', repoPath, provider: 'claude' }, (e) => events.push(e)),
+    ).resolves.toEqual({ prUrl: 'https://example/pr/1' });
+    expect(events.filter((e) => e.type === 'warning')).toEqual([]);
     expect(startSandboxContext).toHaveBeenCalledWith(expect.objectContaining({ egress: true, llmProxy: true }));
     const [, opts] = runGithubIssue.mock.calls[0] ?? [];
     expect(opts?.llmProxy).toEqual({ url: 'http://proxy.internal', nonce: 'nonce-xyz', host: 'proxy.internal' });

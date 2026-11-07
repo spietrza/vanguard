@@ -51,6 +51,10 @@ export interface RunResult {
   transcript?: string;
   /** Model actually used for the run: the provider-reported model, falling back to the configured one. */
   model?: string;
+  /** The CLI's own classification of why the turn ended (e.g. 'success', 'error_max_turns'). See AgentRunOutput.stopReason. */
+  stopReason?: string;
+  /** Truncated summary of the last assistant message's content when finalText ended up empty. See AgentRunOutput.lastBlock. */
+  lastBlock?: string;
   /** Number of agent calls folded into this result (resumes, repairs, fork variants); absent = 1. */
   attempts?: number;
   /** Exit reason of the FIRST attempt when more than one was folded in — keeps a truncation visible after a repair. */

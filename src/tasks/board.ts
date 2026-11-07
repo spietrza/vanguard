@@ -121,3 +121,9 @@ export function toBoardTask(source: BoardSource, task: Task): BoardTask {
     ...(waiting ? { waiting: true } : {}),
   };
 }
+
+/** Join board ids and run-record task ids using the existing provider reference rules. */
+export function taskRefKey(taskId: string): string {
+  const ref = resolveTaskRef(taskId);
+  return ref === undefined ? taskId.toLowerCase() : mintBoardId(ref.source, ref.reference);
+}

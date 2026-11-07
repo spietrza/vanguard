@@ -16,8 +16,17 @@ import { assertStatePath, ensureStateDir, isSafeTaskId } from './state-path.js';
 import { injectedSecretValues, redactForPublish, scanForInjectedSecrets, scanForSecrets } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
+import { reviewVerdictOf } from '../pipeline/review-verdict.js';
 import type { DecisionProbeResult } from './decision-probe.js';
-import type { Proof, RunDetail, RunRecord, RunSummary, StageDetail, VisualProof } from '../wire.js';
+import type { Finding, Proof, RunDetail, RunRecord, RunSummary, StageDetail, VisualProof } from '../wire.js';
+
+/**
+ * Stages whose reply carries a review verdict + `<findings>` block. Hard-coded string literals, not
+ * `STAGE.REVIEWER`/`STAGE.CONFORMANCE`: this module must not take an import on pipeline.ts (which
+ * pulls runAgent, providers, the whole pipeline graph) — the same reason WIRE_PROVIDER_NAMES is a
+ * literal. run-store.test.ts pins this set equal to [STAGE.REVIEWER, STAGE.CONFORMANCE].
+ */
+export const VERDICT_STAGES: ReadonlySet<string> = new Set(['reviewer', 'conformance']);
 
 export type { AgentUsage, Proof, RunDetail, RunRecord, RunSummary, StageDetail, VisualProof, VisualProofArtifact } from '../wire.js';
 
@@ -239,6 +248,11 @@ export async function listRuns(root: string): Promise<RunSummary[]> {
  * against path traversal before any filesystem access.
  */
 export async function readRun(root: string, taskId: string, timestamp: string): Promise<RunDetail> {
+  return readRunRecords(root, taskId, timestamp, true);
+}
+
+/** Record/proof-only read for the board; never opens diff/transcript files. */
+export async function readRunRecords(root: string, taskId: string, timestamp: string, includeArtifacts = false): Promise<RunDetail> {
   if (!isSafeTaskId(taskId)) {
     throw new BadRequestError('invalid task id');
   }
@@ -256,8 +270,8 @@ export async function readRun(root: string, taskId: string, timestamp: string): 
     if (record === undefined) continue;
     if (record.timestamp !== timestamp) continue;
     const base = path.endsWith('.json') ? path.slice(0, -'.json'.length) : path;
-    const diff = await readTextNoSymlink(`${base}.diff`).catch(() => undefined);
-    const transcript = await readTextNoSymlink(`${base}.transcript.log`).catch(() => undefined);
+    const diff = includeArtifacts ? await readTextNoSymlink(`${base}.diff`).catch(() => undefined) : undefined;
+    const transcript = includeArtifacts ? await readTextNoSymlink(`${base}.transcript.log`).catch(() => undefined) : undefined;
     stages.push({
       record,
       ...(diff !== undefined ? { diff } : {}),
@@ -383,8 +397,19 @@ async function writeRecord(repoPath: string, taskId: string, timestamp: string, 
   // credentials by exact value, then token shapes. When the diff is withheld, so is the text: the
   // closing message tends to quote the change and the pattern pass is lossy (a fragment past a token's
   // char class survives).
+  const review = opts.label !== undefined && VERDICT_STAGES.has(opts.label) ? reviewVerdictOf(result.finalText) : undefined;
+  // Findings quote the withheld change directly; only the payload-free verdict may survive.
+  const findings: Finding[] = diffOmitted === undefined && review !== undefined
+    ? review.findings.map((finding) => ({
+        ...finding,
+        title: redactForPublish(finding.title, opts.secretValues),
+        evidence: redactForPublish(finding.evidence, opts.secretValues),
+      }))
+    : [];
   const record = {
     ...meta,
+    ...(review !== undefined ? { verdict: review.verdict } : {}),
+    ...(findings.length > 0 ? { findings } : {}),
     finalText: diffOmitted !== undefined ? `[withheld: ${diffOmitted}]` : redactForPublish(result.finalText, opts.secretValues),
     timestamp,
     ...(opts.label !== undefined ? { stage: opts.label } : {}),

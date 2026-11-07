@@ -2,7 +2,7 @@ import { execa } from 'execa';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { request } from 'node:http';
+import { Agent, request } from 'node:http';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { hubCommand } from './hub.js';
 import { loadPaths } from '../hub/projects.js';
@@ -137,9 +137,14 @@ describe('hubCommand', () => {
       // `NODE_USE_ENV_PROXY`, the global agent sends any non-`NO_PROXY` destination — this hostname
       // included — to `HTTP_PROXY`, which answers 405 instead of the hub.
       const { port } = new URL(url);
+      // Its own agent, so the connection goes straight to the socket: a sandbox that exports
+      // HTTP_PROXY + NODE_USE_ENV_PROXY=1 (loopback-only NO_PROXY) otherwise sends this request —
+      // the one test here that dials a non-loopback address — through that proxy, which answers
+      // for itself and never reaches the hub.
+      const agent = new Agent();
       const get = (path: string): Promise<{ status: number; body: string }> =>
         new Promise((resolve, reject) => {
-          const req = request({ host, port, path, agent: false }, (res) => {
+          const req = request({ host, port, path, agent }, (res) => {
             let body = '';
             res.setEncoding('utf8');
             res.on('data', (chunk: string) => { body += chunk; });
