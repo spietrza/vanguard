@@ -91,7 +91,13 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // integrity hashes (e.g. pnpm-lock.yaml `integrity: sha512-...eyJ...`), which are content hashes,
   // not secrets. Real JWTs always carry two internal dots; integrity hashes never do.
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, replacement: '[REDACTED-JWT]' },
-  { name: 'bearer', re: /(Bearer\s+)[A-Za-z0-9._-]+/gi, replacement: '$1[REDACTED]' },
+  // Explicit authorization headers are unambiguous. Bare scheme mentions need a long value
+  // containing a digit or separator to distinguish credentials from prose (#625).
+  {
+    name: 'bearer',
+    re: /(\bAuthorization\s*:\s*Bearer\s+|\bBearer\s+(?=[A-Za-z0-9._~+/=-]{20,})(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-]))[A-Za-z0-9._~+/=-]+/gi,
+    replacement: '$1[REDACTED]',
+  },
   {
     name: 'json-token-field',
     re: /("(?:access_token|refresh_token|id_token|OPENAI_API_KEY|api_key)"\s*:\s*")[^"]+"/gi,

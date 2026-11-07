@@ -112,10 +112,12 @@ describe('beginRun — writing', () => {
 
   it('masks credential material in transcript.log before it reaches disk', async () => {
     const token = `ghp_${'A'.repeat(36)}`;
+    // 25 chars, mixes letters/digits/separators — long and varied enough to be credential-shaped.
+    const bearerCredential = 'Ab1' + '.De_2-'.repeat(3) + 'xyz9';
     await beginRun(repo, 'TES-1', TS).writeStages([
       {
         name: 'implementer',
-        result: { ...result, transcript: `env: GH_TOKEN=${token}\nAuthorization: Bearer abc.def.ghi\n` },
+        result: { ...result, transcript: `env: GH_TOKEN=${token}\nAuthorization: Bearer ${bearerCredential}\n` },
       },
     ]);
     const log = await readFile(join(runsRoot(repo), 'TES-1', `${PREFIX}-implementer.transcript.log`), 'utf8');
