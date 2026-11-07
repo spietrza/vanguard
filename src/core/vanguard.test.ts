@@ -12,10 +12,34 @@ import {
   workflowPaths,
   assertNoWorkflowChanges,
   copyBackBudget,
+  assertWorkspaceWithinCeiling,
 } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { skillRegistryForRun } from '../context/skill-registry.js';
 import { SandboxError, WorkflowGuardError } from './errors.js';
+
+describe('assertWorkspaceWithinCeiling', () => {
+  const sandbox = (stdout: string, exitCode = 0): Pick<IsolatedSandboxProvider, 'exec'> & { commands: string[] } => {
+    const commands: string[] = [];
+    return { commands, exec: async (command: string) => { commands.push(command); return { exitCode, stdout, stderr: '' }; } };
+  };
+
+  it('measures inside the sandbox with node_modules and .git pruned, and passes under the ceiling', async () => {
+    const sb = sandbox('3 30\n');
+    await expect(assertWorkspaceWithinCeiling(sb, 100, 10)).resolves.toBeUndefined();
+    expect(sb.commands[0]).toContain('-name node_modules -o -name .git');
+  });
+
+  it('refuses before anything is copied when bytes or files pass the ceiling', async () => {
+    await expect(assertWorkspaceWithinCeiling(sandbox('3 101\n'), 100, 10)).rejects.toThrow(SandboxError);
+    await expect(assertWorkspaceWithinCeiling(sandbox('11 0\n'), 100, 10)).rejects.toThrow(/copy-back ceiling/);
+  });
+
+  it('skips (leaving the staging budget) when the measurement does not parse', async () => {
+    await expect(assertWorkspaceWithinCeiling(sandbox('find: unknown predicate', 0), 1, 1)).resolves.toBeUndefined();
+    await expect(assertWorkspaceWithinCeiling(sandbox('', 1), 1, 1)).resolves.toBeUndefined();
+  });
+});
 
 describe('copyBackBudget', () => {
   const file = (size: number): { isDirectory: () => boolean; size: number } => ({ isDirectory: () => false, size });

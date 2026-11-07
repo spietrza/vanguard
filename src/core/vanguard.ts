@@ -329,14 +329,40 @@ async function collectChangedFiles(staging: string, worktree: string, rel: strin
   if (!(await readFile(src)).equals(await readFile(dest))) changed.push(rel);
 }
 
-// ponytail: copy-back ceiling of 2 GiB / 200,000 files (node_modules and .git are skipped and not
-// counted). Far above any real change; it exists so a sandbox cannot fill the host disk through the worktree.
+// ponytail: copy-back ceiling of 2 GiB / 200,000 files (node_modules and .git not counted). Far above
+// any real change; it exists so a sandbox cannot fill the host disk through staging and the worktree.
 export const COPY_BACK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const COPY_BACK_MAX_FILES = 200_000;
 
+function copyBackCeilingError(maxBytes: number, maxFiles: number): SandboxError {
+  return new SandboxError(
+    `copy-back: sandbox workspace exceeds the copy-back ceiling (${maxFiles} files / ${Math.round(maxBytes / 1024 / 1024)} MiB, node_modules and .git excluded); the run stops and nothing is committed — remove build output or large generated files from the workspace`,
+  );
+}
+
 /**
- * A running total over the entries copy-back syncs into the worktree; throws a SandboxError as soon as
- * the total size or file count passes the ceiling. Directories count toward neither.
+ * First check, before anything leaves the sandbox: count files and bytes under the workspace (node_modules
+ * and .git pruned) and refuse when over the ceiling. Output that does not parse (an image without GNU
+ * find) skips this check; the staging-to-worktree budget below still applies.
+ */
+export async function assertWorkspaceWithinCeiling(
+  sandbox: Pick<IsolatedSandboxProvider, 'exec'>,
+  maxBytes = COPY_BACK_MAX_BYTES,
+  maxFiles = COPY_BACK_MAX_FILES,
+): Promise<void> {
+  const res = await sandbox.exec(
+    `find ${WORKDIR} \\( -name node_modules -o -name .git \\) -prune -o -type f -printf '%s\\n' | awk '{n++; s+=$1} END {printf "%d %d\\n", n, s}'`,
+  );
+  const m = /^(\d+) (\d+)\s*$/.exec(res.stdout);
+  if (res.exitCode !== 0 || m === null) return;
+  if (Number(m[1]) > maxFiles || Number(m[2]) > maxBytes) throw copyBackCeilingError(maxBytes, maxFiles);
+}
+
+/**
+ * Second check: a running total over the entries copy-back syncs into the worktree; throws a SandboxError
+ * as soon as the total size or file count passes the ceiling. Directories count toward neither. A throw
+ * mid-copy leaves the worktree partly written, but the error ends the run before commitStage, so
+ * nothing from it is committed or pushed.
  */
 export function copyBackBudget(maxBytes = COPY_BACK_MAX_BYTES, maxFiles = COPY_BACK_MAX_FILES): (entry: { isDirectory: () => boolean; size: number }) => void {
   let bytes = 0;
@@ -345,16 +371,13 @@ export function copyBackBudget(maxBytes = COPY_BACK_MAX_BYTES, maxFiles = COPY_B
     if (entry.isDirectory()) return;
     bytes += entry.size;
     files += 1;
-    if (bytes > maxBytes || files > maxFiles) {
-      throw new SandboxError(
-        `copy-back: sandbox workspace exceeds the copy-back ceiling (${maxFiles} files / ${Math.round(maxBytes / 1024 / 1024)} MiB, node_modules and .git excluded); nothing was committed — remove build output or large generated files from the workspace`,
-      );
-    }
+    if (bytes > maxBytes || files > maxFiles) throw copyBackCeilingError(maxBytes, maxFiles);
   };
 }
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
 async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
+  await assertWorkspaceWithinCeiling(ctx.sandbox);
   const staging = await ensureStateDir(ctx.localRepoPath, join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId));
   try {
     await ctx.sandbox.copyFileOut(WORKDIR, staging);
