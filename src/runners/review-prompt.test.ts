@@ -410,3 +410,15 @@ describe('extractReviewVerdict', () => {
     expect(tail.length).toBe(101);
   });
 });
+
+import { instructionSourceNote, INSTRUCTION_NOTE_PATHS } from './review-prompt.js';
+it('discloses instruction source, escapes tags, and caps the differing paths', () => {
+  const differing = Array.from({ length: 25 }, (_, i) => 'src/<odd' + i + '>/CLAUDE.md');
+  const note = instructionSourceNote({ ref: 'main', sha: 'abcdef012345', baseRefName: 'release', differing });
+  expect(note).toContain('main @ abcdef0');
+  expect(note).toContain('base branch release');
+  expect(note).toContain('src/&lt;odd0>/CLAUDE.md');
+  expect(note).not.toContain('<');
+  expect(note.match(/&lt;odd/g)).toHaveLength(INSTRUCTION_NOTE_PATHS);
+  expect(note).toContain('(25 total)');
+});

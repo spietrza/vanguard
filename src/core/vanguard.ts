@@ -132,6 +132,12 @@ export interface StageInput {
 }
 
 export interface RunDeps {
+  /**
+   * Runs on the fresh worktree before sandbox startup/copyIn and skill loading. May commit on the
+   * throwaway branch (HEAD then differs from startRef). Uncommitted files prevent disposal and
+   * would be included by stages with copyBack enabled. Reviewers use this to seed trusted instructions.
+   */
+  seedWorktree?: (worktreePath: string) => Promise<void>;
   worktrees?: WorktreeManager;
   /**
    * Skills to inject, or a resolver called with the new worktree's path, so repo skills can be read
@@ -220,6 +226,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     if (startRef === '') throw new WorktreeError(`Cannot resolve the start commit for ${opts.taskId}: ${opts.baseBranch} is not a commit in ${opts.localRepoPath} and ${wt.branch} has no head`);
     log.warn({ taskId: opts.taskId, baseBranch: opts.baseBranch, startRef }, `reuse: ${opts.baseBranch} is not a commit here — measuring from the tip of ${wt.branch}`);
   }
+  await deps.seedWorktree?.(wt.path);
   // Acquire a host concurrency slot before booting the sandbox, so a fan-out can't start more
   // sandboxes than the host can hold (blocks until a slot frees).
   await acquireSandboxSlot(opts.sandbox);

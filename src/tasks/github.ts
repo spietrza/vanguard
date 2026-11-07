@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { VanguardError } from '../core/errors.js';
 import { classifyAuthor } from './comment-trust.js';
 import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
 import { redactForPublish } from '../core/secret-scan.js';
@@ -167,4 +168,17 @@ export async function editGithubLabels(
   for (const label of labels.add ?? []) args.push('--add-label', label);
   for (const label of labels.remove ?? []) args.push('--remove-label', label);
   if (args.length > 4) await gh(args);
+}
+
+/** The default branch is the only branch whose instruction files a review trusts. */
+export async function githubDefaultBranch(repoSlug: string, gh: GhRunner = defaultGhRunner): Promise<string> {
+  let data: { defaultBranchRef?: { name?: unknown } | null } | null;
+  try {
+    data = JSON.parse(await gh(['repo', 'view', repoSlug, '--json', 'defaultBranchRef'])) as typeof data;
+  } catch (cause) {
+    throw new VanguardError('Cannot establish the repository default branch', { cause });
+  }
+  const name = data?.defaultBranchRef?.name;
+  if (typeof name !== 'string' || name.trim() === '') throw new VanguardError('Cannot establish the repository default branch');
+  return name;
 }

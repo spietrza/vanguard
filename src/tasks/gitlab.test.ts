@@ -197,3 +197,16 @@ it('list() with limit + all adds -P and --all (the board call); state carried on
   expect(calls[0]).toEqual(['issue', 'list', '--repo', 'g/p', '--output', 'json', '--all', '-P', '50']);
   expect(tasks[0]).toMatchObject({ ref: '5', state: 'closed' });
 });
+
+import { gitlabDefaultBranch } from './gitlab.js';
+import { VanguardError } from '../core/errors.js';
+describe('gitlabDefaultBranch', () => {
+  it('reads the API default branch with the exact argv', async () => {
+    const calls: string[][] = [];
+    expect(await gitlabDefaultBranch('g/p', async (args) => { calls.push(args); return JSON.stringify({ default_branch: 'main' }); })).toBe('main');
+    expect(calls).toEqual([['api', 'projects/g%2Fp']]);
+  });
+  it.each([{}, { default_branch: '' }, { default_branch: null }])('fails closed on %j', async (data) => {
+    await expect(gitlabDefaultBranch('g/p', async () => JSON.stringify(data))).rejects.toThrow(VanguardError);
+  });
+});
