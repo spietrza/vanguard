@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Taskcell — self-hosted software factory" width="820" />
+  <img src="assets/banner.png" alt="Taskcell: self-hosted software factory" width="820" />
 </p>
 
 <p align="center">
@@ -88,14 +88,14 @@ Any stage can run on a different provider or model: `--review-provider codex` fo
 
 ## Security
 
-Taskcell runs coding agents on untrusted input, so the agent is treated as hostile and the controls around it are the core of the product:
+Taskcell runs coding agents on untrusted input and treats the agent as hostile. These controls sit around it:
 
-- **Sandboxed agent.** The agent runs in a Docker container as a non-root user, with all Linux capabilities dropped except three file-ownership ones, `no-new-privileges`, and memory, CPU and PID limits. Secrets reach it through an in-RAM tmpfs file, never argv.
+- **Sandboxed agent.** The agent runs in a Docker container as a non-root user, with all Linux capabilities dropped except three file-ownership ones, `no-new-privileges`, and memory, CPU and PID limits. Secrets reach it through a file on an in-memory tmpfs, not through command-line arguments.
 - **No repository token in the sandbox.** GitHub and GitLab tokens stay on the host. The host, not the agent, pushes the branch and opens the PR.
 - **Egress allowlist and LLM proxy.** `--egress` puts the sandbox on an internal network whose only way out is a proxy that allows listed hosts. `--llm-proxy` also keeps the model key in a sidecar and gives the sandbox a per-run nonce.
 - **Secret gate on the outgoing diff.** Before anything is pushed, the diff is scanned for secret patterns and for the exact values of credentials injected into the run. A hit pushes nothing.
 - **CI config is never copied back.** Changes to `.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml` and `.gitlab/**.yml` are dropped, so agent code cannot become CI code.
-- **Trust gates on input.** The GitHub Actions workflows only start for allowlisted issue authors and senders. On GitHub, comments count as instructions only from repository owners, members and collaborators, the issue author, or logins you allowlist with `--feedback-authors`. On Linear, only workspace members count. GitLab has no association model, so set `--feedback-authors` there to make comment trust a boundary; once it is set, comments from unlisted authors are ignored.
+- **Trust gates on input.** The GitHub Actions workflows only start for allowlisted senders, and `watch` / `watch-prs` skip issues and PRs whose author is neither a repository member nor allowlisted. On GitHub, comments count as instructions only from repository owners, members and collaborators, the issue author, or logins you allowlist with `--feedback-authors`. On Linear, only workspace members count. GitLab has no association model, so set `--feedback-authors` there to make comment trust a boundary; once it is set, comments from unlisted authors are ignored.
 - **Humans merge.** Taskcell opens pull requests and never merges them. The approver runs in shadow mode and only records what it would decide.
 
 How these fit together: [docs/security/boundaries.md](docs/security/boundaries.md). How they map to the OWASP Top 10 for Agentic Applications and the OWASP Top 10 for LLM Applications: [docs/security/owasp-mapping.md](docs/security/owasp-mapping.md) (a self-assessment, not a certification). To report a vulnerability, see [SECURITY.md](SECURITY.md).
