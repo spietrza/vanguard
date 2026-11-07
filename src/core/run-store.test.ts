@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execa } from 'execa';
-import { beginRun, listRuns, readRun, runsRoot, persistDecisionProbe, persistRunRecord, persistStageOutcomes } from './run-store.js';
+import { VERDICT_STAGES, beginRun, listRuns, readRun, runsRoot, persistDecisionProbe, persistRunRecord, persistStageOutcomes } from './run-store.js';
+import { STAGE } from '../pipeline/pipeline.js';
 import type { RunResult } from './types.js';
 
 const TS = '2026-06-06T10:00:00.000Z';
@@ -519,5 +520,56 @@ describe('committed symlinks under .vanguard', () => {
   it('still writes on a real .vanguard/runs', async () => {
     const file = await beginRun(repo, 'gh-o-r-3', TS).writeProof(proof);
     expect(file.startsWith(join(repo, '.vanguard', 'runs', 'gh-o-r-3'))).toBe(true);
+  });
+});
+
+describe('persisted review verdict (T5–T9)', () => {
+  const finding = { severity: 'high', kind: 'security', title: 'credential', evidence: 'unsafe' };
+  const text = '<findings>' + JSON.stringify({ findings: [finding] }) + '</findings>';
+  it('persists and round-trips reviewer findings, leaving other/legacy stages unchanged', async () => {
+    await beginRun(repo, 'TES-1', TS).writeStages([
+      { name: 'reviewer', result: { ...result, finalText: text } },
+      { name: 'implementer', result },
+      { name: 'conformance', result: { ...result, finalText: text } },
+    ]);
+    const detail = await readRun(runsRoot(repo), 'TES-1', TS);
+    expect(detail.stages.find((s) => s.record.stage === 'reviewer')?.record).toMatchObject({ verdict: 'changes', findings: [finding] });
+    expect(detail.stages.find((s) => s.record.stage === 'conformance')?.record.verdict).toBe('changes');
+    const legacy = detail.stages.find((s) => s.record.stage === 'implementer')!.record;
+    expect(legacy).not.toHaveProperty('verdict');
+    expect(legacy).not.toHaveProperty('findings');
+  });
+  it('withholds findings with the diff but retains the verdict', async () => {
+    await beginRun(repo, 'TES-1', TS).writeStages([{ name: 'reviewer', result: { ...result, finalText: text } }], { omitDiff: true });
+    const record = (await readRun(runsRoot(repo), 'TES-1', TS)).stages[0]!.record;
+    expect(record.verdict).toBe('changes');
+    expect(record).not.toHaveProperty('findings');
+    expect(record.finalText).toBe('[withheld: secret-blocked]');
+  });
+  it('redacts finding title/evidence after deriving the raw verdict', async () => {
+    vi.stubEnv('ACME_KEY', 'critical-secret-credential-value');
+    try {
+      const finalText = '<findings>' + JSON.stringify({ findings: [{ severity: 'high', kind: 'security', title: 'critical-secret-credential-value', evidence: 'critical-secret-credential-value' }] }) + '</findings>';
+      await beginRun(repo, 'TES-1', TS, { secretEnvVars: ['ACME_KEY'] }).writeStages([{ name: 'reviewer', result: { ...result, finalText } }]);
+      const record = (await readRun(runsRoot(repo), 'TES-1', TS)).stages[0]!.record;
+      expect(record.findings?.[0]?.title).not.toContain('critical-secret-credential-value');
+      expect(record.findings?.[0]?.evidence).not.toContain('critical-secret-credential-value');
+      expect(record.verdict).toBe('changes');
+      // Prose fallback: the only severity keyword is inside the credential. Deriving from
+      // redacted text would incorrectly pass, even though the incomplete raw reply blocks.
+      await beginRun(repo, 'TES-1', TS, { secretEnvVars: ['ACME_KEY'] }).writeStages([
+        { name: 'reviewer', result: { ...result, completed: false, finalText: 'critical-secret-credential-value' } },
+      ]);
+      const rawVerdict = (await readRun(runsRoot(repo), 'TES-1', TS)).stages[0]!.record;
+      expect(rawVerdict.finalText).not.toContain('critical');
+      expect(rawVerdict.verdict).toBe('changes');
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it('pins verdict stage names and omits empty findings', async () => {
+    expect(VERDICT_STAGES).toEqual(new Set([STAGE.REVIEWER, STAGE.CONFORMANCE]));
+    await beginRun(repo, 'TES-1', TS).writeStages([{ name: 'reviewer', result }]);
+    const record = (await readRun(runsRoot(repo), 'TES-1', TS)).stages[0]!.record;
+    expect(record.verdict).toBe('pass');
+    expect(record).not.toHaveProperty('findings');
   });
 });

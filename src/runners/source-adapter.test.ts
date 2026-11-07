@@ -1,3 +1,5 @@
+import { writeStageMarker, clearStageMarker } from '../core/run-stage-marker.js';
+vi.mock('../core/run-stage-marker.js', () => ({ writeStageMarker: vi.fn(async () => {}), clearStageMarker: vi.fn(async () => {}) }));
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -227,6 +229,38 @@ const STAGES: PipelineStage[] = [
 ];
 
 describe('runSourcedIssue', () => {
+  it.each([false, true])('writes stage markers without an event subscriber and clears on exit (error=%s)', async (fail) => {
+    runStages.mockImplementationOnce(async (_ctx: unknown, _stages: unknown, opts: { onEvent: (event: RunEvent) => void }) => {
+      opts.onEvent({ type: 'stage-start', name: 'implementer', index: 0, of: 2 });
+      opts.onEvent({ type: 'stage-start', name: 'reviewer', index: 1, of: 2 });
+      if (fail) throw new Error('stage failed');
+      return [stageOutcome('reviewer')];
+    });
+    const run = runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+    if (fail) await expect(run).rejects.toThrow('stage failed');
+    else await run;
+    expect(writeStageMarker).toHaveBeenCalledTimes(2);
+    expect(writeStageMarker).toHaveBeenLastCalledWith('/repo', expect.objectContaining({ taskId: 'gl-1', stage: 'reviewer' }));
+    expect(clearStageMarker).toHaveBeenLastCalledWith('/repo', 'gl-1');
+    expect(vi.mocked(clearStageMarker).mock.invocationCallOrder.at(-1)).toBeGreaterThan(vi.mocked(writeStageMarker).mock.invocationCallOrder.at(-1)!);
+  });
+  it('adds exactly one review verdict below proof, omitting it without a reviewer', async () => {
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+    let body = (publishForReview.mock.calls[0]?.[1] as { body: string }).body;
+    expect(body.match(/^Review: PASS \(0 findings\)$/gm)).toHaveLength(1);
+    expect(body.indexOf('Review:')).toBeGreaterThan(body.indexOf('## Proof of work'));
+    publishForReview.mockClear();
+    runStages.mockResolvedValueOnce([stageOutcome('implementer')]);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], [STAGES[0]!]));
+    body = (publishForReview.mock.calls[0]?.[1] as { body: string }).body;
+    expect(body).not.toContain('Review:');
+    publishForReview.mockClear();
+    const blocking = stageOutcome('reviewer');
+    blocking.result.finalText = '<findings>' + JSON.stringify({ findings: [{ severity: 'critical', kind: 'security', title: 'leak', evidence: 'line' }] }) + '</findings>';
+    runStages.mockResolvedValueOnce([blocking]);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+    expect((publishForReview.mock.calls[0]?.[1] as { body: string }).body).toMatch(/^Review: CHANGES \(1 finding\)$/m);
+  });
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.mocked(resolveVerifyCommand).mockReset().mockResolvedValue(undefined);
@@ -644,7 +678,7 @@ describe('runSourcedIssue', () => {
     expect(order).not.toContain('linkPr');
     // PR body is the plain Closes line — no "Vanguard", no "Proof of work" artifact.
     const body = (publishForReview.mock.calls[0]?.[1] as { body: string }).body;
-    expect(body).not.toMatch(/Vanguard|Proof of work/);
+    expect(body).not.toMatch(/Vanguard|Proof of work|Review:/);
     // Commit message is Conventional-Commits-safe (lower-case subject, trailing #issue).
     const message = (commitStage.mock.calls[0]?.[1] as { message: string }).message;
     expect(message).toBe('feat: t (#1)');

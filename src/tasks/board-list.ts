@@ -1,3 +1,5 @@
+import { readStageMarkers } from '../core/run-stage-marker.js';
+import { latestRunChips } from './board-chips.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -7,7 +9,7 @@ import { parseGitlabProjectFromRemote } from '../runners/gitlab.js';
 import { GitHubTaskFetcher } from './github.js';
 import { GitLabTaskFetcher } from './gitlab.js';
 import { LinearCliTaskFetcher, linearGraphql } from './linear-cli.js';
-import { columnFor, mintBoardId, resolveTaskRef, toBoardTask } from './board.js';
+import { columnFor, mintBoardId, resolveTaskRef, taskRefKey, toBoardTask } from './board.js';
 import type { BoardSource } from './board.js';
 import type { TaskFetcher } from './fetcher.js';
 import type { BoardTask } from '../wire.js';
@@ -164,7 +166,25 @@ export async function listBoardTasks(
   }
   // `capped` false-positives on EXACTLY cap items (a one-page budget cannot see page two) — the
   // banner reads "first 50 shown", which stays true; Rust-board parity (review #346 obs 4).
-  return { tasks: tasks.map((t) => toBoardTask(source, t)), capped: tasks.length >= BOARD_FETCH_CAP };
+  const [markers, chips] = await Promise.all([
+    readStageMarkers(repoPath).catch(() => new Map()),
+    latestRunChips(repoPath).catch(() => new Map()),
+  ]);
+  const stages = new Map([...markers.values()].map((m) => [taskRefKey(m.taskId), m.stage]));
+  return {
+    tasks: tasks.map((task) => {
+      const t = toBoardTask(source, task);
+      const key = taskRefKey(t.id);
+      const stage = stages.get(key);
+      const verdicts = chips.get(key);
+      return {
+        ...t,
+        ...(t.column === 'running' && stage !== undefined ? { stage } : {}),
+        ...(verdicts !== undefined && verdicts.length > 0 ? { chips: verdicts } : {}),
+      };
+    }),
+    capped: tasks.length >= BOARD_FETCH_CAP,
+  };
 }
 
 /**

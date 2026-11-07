@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { COMMAND_NAMES, HUB_ONLY, TAURI_ONLY, WIRE_PROVIDER_NAMES } from './wire.js';
-import type { AppConfig, BoardTask, CompleteCallArgs, Project } from './wire.js';
+import type { AppConfig, BoardChip, BoardTask, CompleteCallArgs, Finding, Project, ReviewVerdict, RunRecord } from './wire.js';
 import { PROVIDER_NAMES } from './agents/registry.js';
 
 // Mirrors scripts/gen-desktop-wire.ts (which cannot be imported from src/ — rootDir). The
@@ -55,6 +55,18 @@ describe('wire contract (S7)', () => {
     expectTypeOf<{ id: string; title: string; column: 'queued'; state: string }>().toExtend<BoardTask>();
     const desktop = readFileSync(join(__dirname, '..', 'apps', 'desktop', 'src', 'wire.ts'), 'utf8');
     expect(desktop).toMatch(/^\s*waiting\?: boolean;$/m);
+  });
+
+  it('RunRecord.verdict/findings and BoardTask.stage/chips are optional, present in the regenerated desktop copy (T23)', () => {
+    expectTypeOf<RunRecord['verdict']>().toEqualTypeOf<ReviewVerdict | undefined>();
+    expectTypeOf<RunRecord['findings']>().toEqualTypeOf<Finding[] | undefined>();
+    expectTypeOf<BoardTask['stage']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<BoardTask['chips']>().toEqualTypeOf<BoardChip[] | undefined>();
+    expectTypeOf<{ id: string; title: string; column: 'queued'; state: string }>().toExtend<BoardTask>();
+    const desktop = readFileSync(join(__dirname, '..', 'apps', 'desktop', 'src', 'wire.ts'), 'utf8');
+    expect(desktop).toMatch(/^\s*stage\?: string;$/m);
+    expect(desktop).toMatch(/^\s*chips\?: BoardChip\[\];$/m);
+    expect(desktop).toMatch(/^\s*verdict\?: ReviewVerdict;$/m);
   });
 
   it('wire.ts imports nothing — static, dynamic, or require (webview-safe by construction)', () => {
