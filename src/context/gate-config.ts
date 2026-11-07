@@ -32,6 +32,9 @@ export const DEFAULT_GATE_CONFIG_GLOBS: readonly string[] = [
   'skills/**',
   '.github/vanguard-skills/**',
   'skills.lock.json',
+  // The list that decides what counts as gate config is gate config itself: narrowing it (or
+  // deleting it) weakens every check above, so it goes through the same human gate.
+  '.vanguard/gate-config.json',
 ];
 
 const PACKAGE_JSON_PATH = /(^|[\\/])package\.json$/;
@@ -74,6 +77,31 @@ function changedLinesOnly(patch: string): string[] {
   return patch.split('\n').filter((l) => (l.startsWith('+') || l.startsWith('-')) && !l.startsWith('+++') && !l.startsWith('---'));
 }
 
+/** The longest run of backticks in `text` (0 when it holds none). */
+function longestBacktickRun(text: string): number {
+  return Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+}
+
+/**
+ * Fence-safe: an agent-written file whose content has a ``` line would close a 3-backtick block and
+ * inject PR-body markdown — forging the attestation blocks around this one. Use a fence one backtick
+ * longer than the longest run in the content (same as proofBlock in pipeline/verify.ts).
+ */
+function fenceFor(content: string): string {
+  return '`'.repeat(Math.max(3, longestBacktickRun(content) + 1));
+}
+
+/**
+ * `text` as a Markdown code span whose delimiter is longer than any backtick run inside it, padded
+ * with spaces when it starts or ends with a backtick (CommonMark strips one such pair). A path is
+ * agent-written too, so it must not be able to close the span it sits in either.
+ */
+function codeSpan(text: string): string {
+  const delim = '`'.repeat(longestBacktickRun(text) + 1);
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${delim}${pad}${text}${pad}${delim}`;
+}
+
 /**
  * PR-body block naming each gate-config file this diff touches, with a bounded excerpt of its
  * changed lines — so a human reviewer sees the weakening (or the justification) without a full
@@ -87,8 +115,9 @@ export function gateConfigChangedBlock(files: readonly GateConfigDiffFile[]): st
     const lines = changedLinesOnly(f.patch ?? '');
     const changed = lines.slice(0, GATE_CONFIG_LINES_PER_FILE);
     const more = lines.length - changed.length;
-    if (changed.length === 0) return [`- \`${f.path}\``];
-    return [`- \`${f.path}\``, '  ```diff', ...changed.map((l) => `  ${l}`), '  ```', ...(more > 0 ? [`  …and ${more} more line(s).`] : [])];
+    if (changed.length === 0) return [`- ${codeSpan(f.path)}`];
+    const fence = fenceFor(changed.join('\n'));
+    return [`- ${codeSpan(f.path)}`, `  ${fence}diff`, ...changed.map((l) => `  ${l}`), `  ${fence}`, ...(more > 0 ? [`  …and ${more} more line(s).`] : [])];
   });
   const moreFiles = sorted.length > GATE_CONFIG_FILES_LISTED ? [`…and ${sorted.length - GATE_CONFIG_FILES_LISTED} more file(s).`] : [];
   return [

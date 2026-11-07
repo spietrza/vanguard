@@ -1492,3 +1492,95 @@ it('uses the fallback model for the failed stage and subsequent stages', async (
     spy.mockRestore();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Gate-config signal on a revise push (#627)
+// ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest — gate-config signal', () => {
+  /** Sandbox whose agent writes a gate-config file (plus the usual fix.txt) into the worktree. */
+  function makeGateConfigSandbox(): IsolatedSandboxProvider {
+    return {
+      ...(makeSandbox() as unknown as Record<string, unknown>),
+      copyFileOut: async (sandboxPath: string, hostPath: string): Promise<void> => {
+        if (sandboxPath !== '/workspace') return;
+        await mkdir(hostPath, { recursive: true });
+        await writeFile(join(hostPath, 'fix.txt'), 'fix applied');
+        await writeFile(join(hostPath, 'vitest.config.ts'), 'export default { coverage: { lines: 0 } };\n');
+      },
+    } as unknown as IsolatedSandboxProvider;
+  }
+
+  function makeGh(ghCalls: string[][], commentBodies: string[], opts: { failLabelFlip?: boolean } = {}): GhRunner {
+    return async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') {
+        const bodyIdx = args.indexOf('--body');
+        if (bodyIdx !== -1) commentBodies.push(args[bodyIdx + 1] ?? '');
+        return '';
+      }
+      if (args[0] === 'pr' && args[1] === 'edit') {
+        if (opts.failLabelFlip === true && args.includes('vanguard:gate-config-changed')) throw new Error('label flip refused');
+        return '';
+      }
+      return '';
+    };
+  }
+
+  function run(gh: GhRunner, sandbox: IsolatedSandboxProvider): ReturnType<typeof runRevisePullRequest> {
+    return runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: sandbox,
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+  }
+
+  it('labels and discloses a gate-config change pushed in a revise round', async () => {
+    const ghCalls: string[][] = [];
+    const commentBodies: string[] = [];
+
+    const result = await run(makeGh(ghCalls, commentBodies), makeGateConfigSandbox());
+
+    expect(result.pushed).toBe(true);
+    const summary = commentBodies.find((b) => b.includes('## Revision Summary'));
+    expect(summary).toContain('## Gate config changed');
+    expect(summary).toContain('vitest.config.ts');
+    expect(ghCalls.some((a) => a[0] === 'label' && a[1] === 'create' && a.includes('vanguard:gate-config-changed'))).toBe(true);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--add-label') && a.includes('vanguard:gate-config-changed'))).toBe(true);
+  });
+
+  it('stays silent on a revise round that touches no gate config', async () => {
+    const ghCalls: string[][] = [];
+    const commentBodies: string[] = [];
+
+    await run(makeGh(ghCalls, commentBodies), makeSandbox());
+
+    expect(commentBodies.every((b) => !b.includes('## Gate config changed'))).toBe(true);
+    expect(ghCalls.some((a) => a.includes('vanguard:gate-config-changed'))).toBe(false);
+  });
+
+  it('reports a failed gate-config label flip instead of handing the PR back unflagged', async () => {
+    const ghCalls: string[][] = [];
+    const commentBodies: string[] = [];
+
+    await expect(run(makeGh(ghCalls, commentBodies, { failLabelFlip: true }), makeGateConfigSandbox())).rejects.toThrow('label flip refused');
+    // The disclosure still went out, and the round never reached the hand-back: the PR keeps
+    // `vanguard:revising` rather than silently returning for review without the gate label.
+    expect(commentBodies.some((b) => b.includes('## Gate config changed'))).toBe(true);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'ready')).toBe(false);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--remove-label'))).toBe(false);
+  });
+});
