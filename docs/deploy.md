@@ -18,6 +18,8 @@ host docker daemon
 
 This works without path tricks because the controller copies the worktree into each sandbox with `docker cp` (it reads the source from its own filesystem) and injects secrets over tmpfs. It never bind-mounts the worktree, so there is no "host path must match" problem. One requirement stands: the **sandbox image must exist on the host daemon** that the controller drives.
 
+> **Warning: the Docker socket is host root.** The controller (`vanguard-watch`, `vanguard-watch-prs`, `vanguard-gc`) and the hub (`docker/hub.Dockerfile`) mount `/var/run/docker.sock` by design, because that is how they start sibling sandboxes. Anything that can talk to that socket can start a privileged container with the host filesystem mounted, so a compromised controller or hub process is equivalent to root on the host. The sandboxes themselves never get the socket. Treat these containers as host-privileged: run them on a box dedicated to Vanguard, keep the hub off the public internet, and keep their images pinned. To narrow the blast radius, run the daemon in [rootless mode](https://docs.docker.com/engine/security/rootless/) (a socket compromise is then bounded by an unprivileged user), or put a socket proxy such as [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) in front of the daemon and point `DOCKER_HOST` at it with only the API sections the controller uses (containers, images, networks, exec, POST) enabled. A proxy limits which endpoints are reachable, not what a created container may mount, so it reduces exposure rather than removing it; rootless mode is the stronger option.
+
 ## What you need on the host
 
 1. Docker. Synology: Container Manager. Hetzner: `apt install docker.io` or Docker CE.
@@ -30,6 +32,8 @@ This works without path tricks because the controller copies the worktree into e
 Vanguard reads auth from the environment. `authFromEnv()` prefers `CLAUDE_CODE_OAUTH_TOKEN` (subscription) over `ANTHROPIC_API_KEY` (pay per use). Run on the subscription token: set `CLAUDE_CODE_OAUTH_TOKEN` and leave `ANTHROPIC_API_KEY` unset. With `--llm-proxy` the real token never enters the sandbox at all: a trusted sidecar holds it (and the Codex/OpenAI key too when Codex is used) and the sandbox sees only a per-run nonce.
 
 1Password is a local-dev convenience and is not part of Vanguard. On a server you populate the env some other way. The simplest is a root-only `.env` (chmod 600) next to the compose file.
+
+Secrets are passed at **runtime only**: compose reads that `.env` to fill the `${VAR}` references in `environment:` (or use `env_file:`), and plain `docker run` takes `-e VAR` / `--env-file`. Never put them in a Dockerfile `ARG`/`ENV` or in an image layer. The runner and hub images are built with `COPY . .`, so the repo-root `.dockerignore` keeps `.env*`, `.git`, `.vanguard`, `node_modules`, local tool state, build output and `docker/target-repo` out of the image; the sandbox build context (`docker/`) sends nothing. Keep the `.env` and the target-repo clone in those excluded places, or outside the checkout entirely.
 
 ---
 
@@ -164,8 +168,9 @@ A Hetzner CX/CPX/CCX box is simpler than Synology: it is amd64, has git, and its
 ```bash
 apt update && apt install -y docker.io docker-compose-plugin git
 git clone https://github.com/OWNER/REPO.git /opt/vanguard && cd /opt/vanguard
-git clone https://github.com/OWNER/REPO.git docker/target-repo   # the repo the agent edits
-printf 'CLAUDE_CODE_OAUTH_TOKEN=...\nLINEAR_API_KEY=...\nGH_TOKEN=...\n# VANGUARD_VERIFY_CMD=pnpm install --frozen-lockfile && pnpm typecheck && pnpm test\n' > .env && chmod 600 .env
+git clone https://github.com/OWNER/REPO.git docker/target-repo   # the repo the agent edits (mounted, never baked)
+# secrets next to docker/compose.yaml, read by compose at runtime; .dockerignore keeps them out of the image
+printf 'CLAUDE_CODE_OAUTH_TOKEN=...\nLINEAR_API_KEY=...\nGH_TOKEN=...\n# VANGUARD_VERIFY_CMD=pnpm install --frozen-lockfile && pnpm typecheck && pnpm test\n' > docker/.env && chmod 600 docker/.env
 docker compose -f docker/compose.yaml up -d --build         # builds runner; build the sandbox too
 docker build -t vanguard-sandbox:latest docker/             # sandbox image on the same daemon
 docker compose -f docker/compose.yaml logs -f vanguard-watch
