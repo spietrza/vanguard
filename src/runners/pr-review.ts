@@ -15,6 +15,7 @@ import {
   diffLineCount,
   extractReviewRisk,
   extractReviewVerdict,
+  labelNames,
   neutralizePromptTags,
   omitGeneratedFiles,
   outputTail,
@@ -173,7 +174,7 @@ export async function fetchPullRequestForReview(target: PullRequestReviewTarget,
     isCrossRepository: view.isCrossRepository ?? false,
     headRepositoryOwner: view.headRepositoryOwner?.login ?? '',
     diff,
-    labels: (view.labels ?? []).map((l) => l.name ?? '').filter((n) => n !== ''),
+    labels: labelNames(view.labels),
   };
 }
 

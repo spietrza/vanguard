@@ -41,6 +41,7 @@ function fakeResult(): ReviewPullRequestResult {
       isCrossRepository: false,
       headRepositoryOwner: '',
       diff: 'diff',
+      labels: [],
     },
     commentBody: '## Vanguard Review\n\nNo blocking findings.',
   };

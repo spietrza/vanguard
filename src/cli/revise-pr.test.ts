@@ -29,6 +29,7 @@ function makeResult(committed = true): ReviseGithubPrResult {
       isCrossRepository: false,
       headRepositoryOwner: '',
       diff: 'diff',
+      labels: [],
     },
     addressed: committed ? 1 : 0,
     committed,

@@ -202,6 +202,14 @@ export const AUTHORITATIVE_BLOCK_INSTRUCTION =
 export const GATE_CONFIG_REVIEW_INSTRUCTION =
   "This change is labelled as touching gate config: checker config the verify gate runs from the agent's own worktree (coverage thresholds, lint rules, type settings, or the verify/test/lint/typecheck scripts), or the skills the agent reads from. Any weakening of a check here — a lowered threshold, a disabled rule, a relaxed type setting, a loosened script — is blocking unless the linked issue explicitly asked for it.";
 
+/**
+ * Label names from a `gh`/`glab` view payload, which carries either plain names or `{ name }` objects.
+ * Unnamed entries are dropped, so a present-but-empty label never matches a gate label.
+ */
+export function labelNames(labels: Array<string | { name?: string }> | null | undefined): string[] {
+  return (labels ?? []).map((l) => (typeof l === 'string' ? l : l.name ?? '')).filter((n) => n !== '');
+}
+
 /** Maximum number of untrusted differing paths included in the authoritative note. */
 export const INSTRUCTION_NOTE_PATHS = 20;
 
