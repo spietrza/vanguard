@@ -1,6 +1,7 @@
 import { defaultGhRunner } from '../tasks/github.js';
 import type { GhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
+import { classifyAuthor } from '../tasks/comment-trust.js';
 import type { Decision, DecisionRecord } from './types.js';
 
 // gh api flags that take a value; the endpoint is the one positional argument left after them.
@@ -137,6 +138,8 @@ function commentBody(decision: Decision, record: DecisionRecord): string {
 
 interface GhComment {
   body?: string;
+  author?: { login?: string } | null;
+  authorAssociation?: string;
 }
 
 /** A human-readable copy of the decision, deduped per head SHA by a hidden marker. Nothing ever parses this comment. */
@@ -152,7 +155,9 @@ export async function commentDecision(
   try {
     const out = await safeGh(['pr', 'view', String(prNumber), '--repo', repoSlug, '--json', 'comments']);
     const parsed = JSON.parse(out) as { comments?: GhComment[] };
-    if ((parsed.comments ?? []).some((c) => c.body?.includes(marker) === true)) return;
+    // Only a trusted author's marker dedupes: anyone can post the marker text to suppress the decision comment.
+    const trusted = (c: GhComment): boolean => classifyAuthor(c.author?.login ?? '', c.authorAssociation ?? '') !== 'untrusted';
+    if ((parsed.comments ?? []).some((c) => c.body?.includes(marker) === true && trusted(c))) return;
   } catch {
     // best-effort dedupe lookup; fall through and post
   }

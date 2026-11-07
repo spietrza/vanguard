@@ -1,8 +1,8 @@
 import { fanOut } from '../pipeline/fan-out.js';
 import { failureReason } from '../core/errors.js';
 import { hasPullRequestReviewMarker } from './pr-review.js';
-import { defaultGhRunner } from '../tasks/github.js';
-import { isBotLogin } from '../tasks/comment-trust.js';
+import { defaultGhRunner, isTrustedIssueAuthor } from '../tasks/github.js';
+import { classifyAuthor, describeIgnoredAuthor, isBotLogin } from '../tasks/comment-trust.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestWatchItem {
@@ -21,6 +21,8 @@ export interface PullRequestWatchPrimitives {
   review: (item: PullRequestWatchItem) => Promise<void>;
   markReviewed: (item: PullRequestWatchItem) => Promise<void>;
   onFailure: (item: PullRequestWatchItem, error: unknown) => Promise<void>;
+  /** PR ids the last listReady() could not decide on (a pinned PR's failed author lookup); counted as failed. */
+  takeListFailures?: () => string[];
 }
 
 export interface PullRequestWatchTick {
@@ -55,6 +57,11 @@ export interface GitHubPullRequestWatchOptions {
    * the label was deliberately (re-)added.
    */
   hintPr?: number;
+  /**
+   * Extra PR-author logins trusted beyond OWNER/MEMBER/COLLABORATOR (--feedback-authors; the workflow's
+   * allowed-actors). A PR by anyone else is skipped, as the label-triggered path's author gate does.
+   */
+  allowedAuthors?: readonly string[];
   log?: (line: string) => void;
   gh?: GhRunner;
   reviewOne: (item: PullRequestWatchItem) => Promise<void>;
@@ -71,6 +78,8 @@ interface GhPullRequestListItem {
 
 interface GhPullRequestReviewBody {
   body?: string | null;
+  author?: { login?: string } | null;
+  authorAssociation?: string;
 }
 
 interface GhPullRequestReviewView {
@@ -167,13 +176,17 @@ async function fetchHintedPullRequest(
   return item;
 }
 
-async function hasExistingReviewForHead(gh: GhRunner, item: PullRequestWatchItem): Promise<boolean> {
+async function hasExistingReviewForHead(gh: GhRunner, item: PullRequestWatchItem, allowedAuthors?: readonly string[]): Promise<boolean> {
   if (item.headRefOid === '') return false;
   try {
     const out = await gh(['pr', 'view', String(item.number), '--repo', item.repoSlug, '--json', 'comments,reviews']);
     const view = JSON.parse(out) as GhPullRequestReviewView;
-    const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((entry) => entry.body ?? '');
-    return bodies.some((body) => hasPullRequestReviewMarker(body, item.headRefOid));
+    // Only a trusted author's marker counts: anyone can post the marker text to suppress a review.
+    return [...(view.comments ?? []), ...(view.reviews ?? [])].some(
+      (entry) =>
+        classifyAuthor(entry.author?.login ?? '', entry.authorAssociation ?? '', { allowedAuthors }) !== 'untrusted' &&
+        hasPullRequestReviewMarker(entry.body ?? '', item.headRefOid),
+    );
   } catch {
     return false;
   }
@@ -186,7 +199,9 @@ async function hasExistingReviewForHead(gh: GhRunner, item: PullRequestWatchItem
  */
 export function githubPullRequestWatchPrimitives(opts: GitHubPullRequestWatchOptions): PullRequestWatchPrimitives {
   const gh = opts.gh ?? defaultGhRunner;
+  let listFailures: string[] = [];
   return {
+    takeListFailures: () => listFailures,
     listReady: async () => {
       const listArgs = [
         'pr',
@@ -213,15 +228,28 @@ export function githubPullRequestWatchPrimitives(opts: GitHubPullRequestWatchOpt
         const hinted = await fetchHintedPullRequest(gh, opts, opts.hintPr);
         if (hinted !== undefined) candidates.push(hinted);
       }
+      listFailures = [];
+      const authorGate = async (item: PullRequestWatchItem): Promise<PullRequestWatchItem | undefined> => {
+        const author = await isTrustedIssueAuthor(item.repoSlug, item.number, opts.allowedAuthors, gh);
+        if (author.trusted) return item;
+        if (author.error !== undefined) {
+          opts.log?.(`watch-prs ${prId(item)}: skip -> author lookup failed: ${author.error}`);
+          // The pinned PR was asked for by name: a lookup failure must fail the run, not end green.
+          if (item.number === opts.hintPr) listFailures.push(prId(item));
+          return undefined;
+        }
+        opts.log?.(`watch-prs ${prId(item)}: skip -> PR author ${describeIgnoredAuthor(author.author || item.author, author.association)} is not trusted`);
+        return undefined;
+      };
       const ready = await Promise.all(
         candidates.map(async (item): Promise<PullRequestWatchItem | undefined> => {
           // The hinted PR was deliberately (re-)labeled: review it even when this head has a verdict.
-          if (item.number === opts.hintPr) return item;
-          if (await hasExistingReviewForHead(gh, item)) {
+          if (item.number === opts.hintPr) return authorGate(item);
+          if (await hasExistingReviewForHead(gh, item, opts.allowedAuthors)) {
             opts.log?.(`watch-prs ${prId(item)}: skip -> head ${item.headRefOid.slice(0, 7)} already reviewed`);
             return undefined;
           }
-          return item;
+          return authorGate(item);
         }),
       );
       return ready.filter((item): item is PullRequestWatchItem => item !== undefined);
@@ -252,6 +280,7 @@ export async function watchPullRequestsOnce(
 ): Promise<PullRequestWatchTick> {
   const phase = opts.phase ?? 'watch-prs';
   const ready = await primitives.listReady();
+  const listFailed = primitives.takeListFailures?.() ?? [];
   opts.log?.(`${phase}: poll -> ${ready.length} ready`);
   const results = await fanOut(
     ready,
@@ -284,7 +313,7 @@ export async function watchPullRequestsOnce(
   );
   const ids = (kind: PullRequestWatchKind): string[] =>
     results.flatMap((outcome) => (outcome.status === 'fulfilled' && outcome.value.kind === kind ? [outcome.value.id] : []));
-  return { reviewed: ids('reviewed'), failed: ids('failed'), skipped: ids('skipped') };
+  return { reviewed: ids('reviewed'), failed: [...listFailed, ...ids('failed')], skipped: ids('skipped') };
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {

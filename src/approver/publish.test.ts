@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertShadowSafeGhArgs, publishCheckRun } from './publish.js';
+import { assertShadowSafeGhArgs, commentDecision, publishCheckRun } from './publish.js';
 import type { Decision, DecisionRecord } from './types.js';
 
 const SHA = 'a'.repeat(40);
@@ -76,5 +76,31 @@ describe('publishCheckRun', () => {
       return JSON.stringify({ check_runs: [] });
     };
     await expect(publishCheckRun(gh, 'o/r', SHA, 7, decision, record)).rejects.toThrow(/403/);
+  });
+});
+
+describe('commentDecision', () => {
+  const decision: Decision = { verdict: 'ESCALATE', rulesFired: [], auditSample: { p: 0, seed: 's', hit: false }, reviewValid: false };
+  const record = {
+    headSha: SHA,
+    signals: { files: 1, lines: 1, testFilesDeleted: 0, testCasesDelta: 0, exportsRemoved: 0, newDependency: false, paths: [] },
+  } as unknown as DecisionRecord;
+  const marker = `<!-- vanguard-approver: ${SHA} -->`;
+  const posted = async (comments: unknown[]): Promise<boolean> => {
+    let comment = false;
+    await commentDecision(async (args) => {
+      if (args[1] === 'comment') comment = true;
+      return args[1] === 'view' ? JSON.stringify({ comments }) : '';
+    }, 'o/r', 7, decision, record);
+    return comment;
+  };
+
+  it('dedupes on its own marker from the bot', async () => {
+    expect(await posted([{ author: { login: 'github-actions' }, authorAssociation: 'CONTRIBUTOR', body: marker }])).toBe(false);
+  });
+
+  it('ignores the marker when an untrusted commenter posted it', async () => {
+    expect(await posted([{ author: { login: 'mallory' }, authorAssociation: 'NONE', body: marker }])).toBe(true);
+    expect(await posted([{ body: marker }])).toBe(true);
   });
 });

@@ -207,9 +207,13 @@ jobs:
           IN_MAX_TASKS: ${{ inputs.max-tasks }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
           IN_SKILLS: ${{ inputs.skills }}
+          IN_ALLOWED_ACTORS: ${{ inputs.allowed-actors }}
         run: |
           # One sweep: spec pass advances "ready for spec" -> "ready for agent", agent pass builds it in the same run (#143).
           args=(watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once)
+          # Allowed actors also count as trusted issue/comment authors (repo members always do).
+          feedback_authors=$(jq -r 'join(",")' <<<"$IN_ALLOWED_ACTORS")
+          if [ -n "$feedback_authors" ]; then args+=(--feedback-authors "$feedback_authors"); fi
           [ -n "$IN_SKILLS" ] && args+=(--skills "$IN_SKILLS")
           [ -n "$IN_SPEC_MODEL" ] && args+=(--spec-model "$IN_SPEC_MODEL")
           [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")

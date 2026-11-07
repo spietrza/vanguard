@@ -36,8 +36,8 @@ function prFacts(overrides: Partial<PrFacts> = {}): PrFacts {
   };
 }
 
-function review(body: string, opts: { author?: string; submittedAt?: string } = {}): PrFacts['reviews'][number] {
-  return { author: opts.author ?? 'github-actions', body, submittedAt: opts.submittedAt ?? '2026-10-20T00:00:00Z', state: 'COMMENTED' };
+function review(body: string, opts: { author?: string; submittedAt?: string; state?: string } = {}): PrFacts['reviews'][number] {
+  return { author: opts.author ?? 'github-actions', body, submittedAt: opts.submittedAt ?? '2026-10-20T00:00:00Z', state: opts.state ?? 'COMMENTED' };
 }
 
 describe('collectPrFacts', () => {
@@ -168,6 +168,17 @@ describe('collectReviewFacts', () => {
       sha: null,
       author: null,
     });
+  });
+
+  it('counts only a COMMENTED review from an exact allow-listed login, never a lookalike or another review state', () => {
+    const body = buildPullRequestReviewComment('Verdict: NO BLOCKING FINDINGS', SHA);
+    for (const author of ['github-actions[bot]', 'GitHub-Actions', 'github-actions-ci', 'mallory']) {
+      expect(collectReviewFacts(prFacts({ reviews: [review(body, { author })] }), policy).sha).toBeNull();
+    }
+    for (const state of ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED', 'PENDING']) {
+      expect(collectReviewFacts(prFacts({ reviews: [review(body, { state })] }), policy).sha).toBeNull();
+    }
+    expect(collectReviewFacts(prFacts({ reviews: [review(body)] }), policy).sha).toBe(SHA);
   });
 
   it('rejects a body with no marker, and one carrying two distinct planted markers', () => {

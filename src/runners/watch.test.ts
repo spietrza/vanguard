@@ -18,6 +18,7 @@ import type { SpecWatchPrimitives, WatchPrimitives, WatchGitlabOptions } from '.
 import type { RunGithubIssueResult } from './github.js';
 import type { RunGitlabIssueResult } from './gitlab.js';
 import type { RunLinearIssueResult } from './linear.js';
+import { GitHubTaskFetcher } from '../tasks/github.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { TaskFetcher } from '../tasks/fetcher.js';
 import type { LinearCliRunner } from '../tasks/linear-cli.js';
@@ -1186,11 +1187,13 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
   });
 
   it('claim clears a stale secret-blocked label only on issues listReady saw carrying it', async () => {
-    const gh: GhRunner = vi.fn().mockResolvedValue(
-      JSON.stringify([
-        { number: 1, title: 'retried', body: '', labels: [{ name: 'ready for agent' }, { name: GITHUB_SECRET_BLOCKED_LABEL }] },
-        { number: 2, title: 'fresh', body: '', labels: [{ name: 'ready for agent' }] },
-      ]),
+    const gh: GhRunner = vi.fn(async (args: string[]) =>
+      args[0] === 'api'
+        ? JSON.stringify({ user: { login: 'maintainer' }, author_association: 'MEMBER' })
+        : JSON.stringify([
+          { number: 1, title: 'retried', body: '', labels: [{ name: 'ready for agent' }, { name: GITHUB_SECRET_BLOCKED_LABEL }] },
+          { number: 2, title: 'fresh', body: '', labels: [{ name: 'ready for agent' }] },
+        ]),
     );
     const primitives = githubIssueWatchPrimitives({
       deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
@@ -1266,6 +1269,62 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     expect(commentCall).toBeDefined();
     const bodyIdx = commentCall?.indexOf('--body') ?? -1;
     expect(commentCall?.[bodyIdx + 1]).toContain('no changes');
+  });
+});
+
+describe('GitHub watch issue-author gate', () => {
+  const issues = JSON.stringify([
+    { number: 1, title: 'member', body: '', labels: [{ name: 'ready for agent' }] },
+    { number: 2, title: 'outsider', body: '', labels: [{ name: 'ready for agent' }] },
+    { number: 3, title: 'allowlisted', body: '', labels: [{ name: 'ready for agent' }] },
+    { number: 4, title: 'lookup fails', body: '', labels: [{ name: 'ready for agent' }] },
+  ]);
+  const authors: Record<string, { user: { login: string }; author_association: string }> = {
+    'repos/owner/repo/issues/1': { user: { login: 'maintainer' }, author_association: 'COLLABORATOR' },
+    'repos/owner/repo/issues/2': { user: { login: 'mallory' }, author_association: 'NONE' },
+    'repos/owner/repo/issues/3': { user: { login: 'Friend' }, author_association: 'CONTRIBUTOR' },
+  };
+  const gh: GhRunner = async (args) => {
+    if (args[0] !== 'api') return issues;
+    const author = authors[args[1] ?? ''];
+    if (author === undefined) throw new Error('HTTP 502');
+    return JSON.stringify(author);
+  };
+
+  it('agent pass lists only issues by members or allowlisted authors and logs the rest', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const primitives = githubIssueWatchPrimitives({
+        deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo', feedbackAuthors: ['friend'] },
+        label: 'ready for agent',
+        claimedLabel: GITHUB_CLAIMED_LABEL,
+        reviewLabel: GITHUB_REVIEW_LABEL,
+        gh,
+      });
+      expect(await primitives.listReady()).toEqual([{ id: 'owner/repo#1' }, { id: 'owner/repo#3' }]);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('owner/repo#2 skipped -> issue author @mallory (NONE) is not trusted'));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('owner/repo#4 skipped -> author lookup failed: HTTP 502'));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('spec pass applies the same gate, so an outsider issue never advances into the agent pass', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const primitives = githubSpecPrimitives({
+        deps: { repoPath: '/tmp', fetcher: new GitHubTaskFetcher('owner/repo', gh) },
+        repoSlug: 'owner/repo',
+        specLabel: 'ready for agent',
+        claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
+        agentLabel: 'agent',
+        needsInfoLabel: 'needs info',
+        gh,
+      });
+      expect(await primitives.listReady()).toEqual([{ id: 'owner/repo#1' }]);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 
