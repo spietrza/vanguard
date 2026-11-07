@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -107,5 +107,16 @@ describe('listActive', () => {
     const active = await listActive(tmp);
     expect(active.length).toBe(1);
     expect(active[0]?.taskId).toBe('task-z');
+  });
+});
+
+describe('listActive — non-regular session files', () => {
+  it('never offers a symlinked .jsonl as a session to tail', async () => {
+    const outside = join(tmp, 'outside.jsonl');
+    await write(outside, '{}');
+    const sess = join(tmp, '.vanguard', 'sessions', 'task-link');
+    await mkdir(sess, { recursive: true });
+    await symlink(outside, join(sess, 'a.jsonl'));
+    expect(await listActive(tmp)).toEqual([]);
   });
 });

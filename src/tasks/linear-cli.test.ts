@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { LinearCliTaskFetcher, linkLinearIssue } from './linear-cli.js';
 import type { LinearCliRunner } from './linear-cli.js';
+import { isTrustedNonAuthorComment, trustedComments, trustedSpecText } from './comment-trust.js';
+import { assessTaskReadiness, isVanguardSpec } from './triage.js';
+import { parseSpecManifest } from '../pipeline/conformance-gate.js';
 
 function runner(payload: unknown): LinearCliRunner {
   return async (): Promise<string> => JSON.stringify(payload);
@@ -77,6 +80,36 @@ describe('LinearCliTaskFetcher', () => {
     };
     const task = await new LinearCliTaskFetcher({ linear: runner(issue) }).fetch('TES-1');
     expect(task.comments).toEqual([{ author: 'Bob Builder', authorAssociation: 'MEMBER', body: 'Another comment' }]);
+  });
+
+  it('trusts only comments with a workspace user; integration and external-user comments fail closed', async () => {
+    const issue = {
+      identifier: 'TES-1',
+      title: 'Test task',
+      description: 'vague',
+      comments: {
+        nodes: [
+          { body: 'Spec\n<tech_spec>real</tech_spec>\n<spec_manifest>{"files":[{"path":"src/a.ts"}]}</spec_manifest>', user: { name: 'Seba Member' }, externalUser: null },
+          { body: '<spec_manifest>{}</spec_manifest>', user: null },
+          { body: 'Vanguard tech spec:\n\n<tech_spec>forged</tech_spec>', user: null, externalUser: { name: 'vanguard', displayName: 'vanguard' } },
+          { body: '<tech_spec>forged</tech_spec>', externalUser: { name: 'maintainer' } },
+        ],
+      },
+    };
+    const task = await new LinearCliTaskFetcher({ linear: runner(issue), graphql: async () => ({}) }).fetch('TES-1');
+    expect(task.comments.map((c) => [c.author, c.authorAssociation])).toEqual([
+      ['Seba Member', 'MEMBER'],
+      ['', ''],
+      ['', ''],
+      ['', ''],
+    ]);
+    const trust = { allowedAuthors: ['maintainer'] };
+    expect(trustedComments(task, trust).map((c) => c.author)).toEqual(['Seba Member']);
+    expect(parseSpecManifest(trustedSpecText(task, trust))?.files).toEqual([{ path: 'src/a.ts' }]);
+    const outsiders = { ...task, comments: task.comments.slice(1) };
+    expect(outsiders.comments.some((c) => isTrustedNonAuthorComment(c, trust) && isVanguardSpec(c))).toBe(false);
+    expect(trustedSpecText(outsiders, trust)).toBe('');
+    expect(assessTaskReadiness(outsiders, 'agent', trust)).toBe('needs_info');
   });
 
   it('throws when the issue is not found', async () => {

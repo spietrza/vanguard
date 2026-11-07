@@ -1,9 +1,10 @@
 // listRemoteRuns ports apps/desktop/src-tauri/src/remote.rs; fetchRemoteRun is new (CI artifact import).
 import { execa } from 'execa';
-import { cp, lstat, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BadRequestError } from '../sidecar/sidecar.js';
+import { assertStatePath, ensureStateDir } from '../core/state-path.js';
 import { isRunRecordFile, listRunSummaries, remoteRunsRoot } from './runs.js';
 import type { RemoteImport, RemoteRun, RunSummary } from '../wire.js';
 
@@ -248,14 +249,22 @@ export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec
   const remoteRunsBase = join(repoPath, '.vanguard', 'remote-runs');
   const finalDir = join(remoteRunsBase, String(runId));
   const tmpDest = `${finalDir}.tmp`;
+  const gitignorePath = join(remoteRunsBase, '.gitignore');
 
-  await mkdir(remoteRunsBase, { recursive: true });
+  // The destination is inside the checkout: a committed symlink at `.vanguard`, `remote-runs` or any
+  // of these leaves would point the recursive deletes and the copy outside it.
+  try {
+    for (const path of [finalDir, tmpDest, gitignorePath]) await assertStatePath(repoPath, path);
+    await ensureStateDir(repoPath, remoteRunsBase);
+  } catch (error) {
+    await rm(importDir, { recursive: true, force: true });
+    throw error;
+  }
   await rm(tmpDest, { recursive: true, force: true });
   await cp(runsDir, tmpDest, { recursive: true });
   await rm(finalDir, { recursive: true, force: true });
   await rename(tmpDest, finalDir);
 
-  const gitignorePath = join(remoteRunsBase, '.gitignore');
   try {
     await writeFile(gitignorePath, '*\n', { flag: 'wx' });
   } catch (error) {

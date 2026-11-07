@@ -6,6 +6,7 @@ import { OpenRouterProvider, OPENROUTER_BASE_URL, OPENROUTER_DEFAULT_MODEL } fro
 import { MeridianProvider, MERIDIAN_PLACEHOLDER_TOKEN } from './meridian.js';
 import { CustomProvider } from './custom.js';
 import { AgentError } from '../core/errors.js';
+import { registerInjectedSecretEnvVars } from '../core/secret-scan.js';
 import type { AgentProvider } from './provider.js';
 import type { CustomProviderEntry } from './custom.js';
 
@@ -589,6 +590,8 @@ export function selectAgents(
   const used = usedProviderNames(choice);
 
   validateProviderChoice(choice, opts);
+  // Every later publish path redacts a custom provider's key by value, not only the paths handed the run config.
+  registerInjectedSecretEnvVars(providerKeyEnvNames(choice));
 
   const { sandboxSecrets, proxySecrets } = providerSecrets(used, env, opts, customs);
   return {

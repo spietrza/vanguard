@@ -61,6 +61,11 @@ describe('ProjectAllowlist', () => {
     // Same grammar, but the owning repo (`other`) is not in the allowlist.
     await expect(allowlist.assertSessionPath(otherSessionFile)).rejects.toThrow(/not an allowed project/);
 
+    // A symlinked session file is refused even when its target is another allowed session file.
+    const linked = join(sessionsDir, 'link.jsonl');
+    await symlink(sessionFile, linked);
+    await expect(allowlist.assertSessionPath(linked)).rejects.toThrow(/not a vanguard session file/);
+
     // Not even a session-shaped path at all.
     await expect(allowlist.assertSessionPath(join(repo, '.vanguard', 'runs', 'x.json'))).rejects.toThrow(
       /not a vanguard session file/,

@@ -932,7 +932,7 @@ describe('githubProjectWatchPrimitives', () => {
 
   it('claim survives a failing stale-label cleanup: the item is claimed and run, not read as taken', async () => {
     const itemList = JSON.stringify({
-      items: [{ id: 'PVTI_1', status: 'Todo', content: { type: 'Issue', number: 7, repository: 'other/repo', labels: ['vanguard', GITHUB_SECRET_BLOCKED_LABEL] } }],
+      items: [{ id: 'PVTI_1', status: 'Todo', content: { type: 'Issue', number: 7, repository: 'owner/repo', labels: ['vanguard', GITHUB_SECRET_BLOCKED_LABEL] } }],
     });
     const ghCalls: string[][] = [];
     const gh: GhRunner = async (args) => {
@@ -956,10 +956,46 @@ describe('githubProjectWatchPrimitives', () => {
     const ran: string[] = [];
     const tick = await watchOnce({ ...primitives, runOne: async (id) => { ran.push(id); return { prUrl: 'pr/7' }; } }, { concurrency: 1 });
 
-    expect(ran).toEqual(['other/repo#7']);
+    expect(ran).toEqual(['owner/repo#7']);
     expect(tick.skipped).toEqual([]);
     const cleanup = ghCalls.find((a) => a[0] === 'issue' && a[1] === 'edit');
-    expect(cleanup?.[cleanup.indexOf('--repo') + 1]).toBe('other/repo'); // the board item's repo, not the watch's
+    expect(cleanup?.[cleanup.indexOf('--repo') + 1]).toBe('owner/repo');
+  });
+
+  it('skips board items from another repository instead of running the local issue with that number', async () => {
+    const itemList = JSON.stringify({
+      items: [
+        { id: 'PVTI_1', status: 'Todo', content: { type: 'Issue', number: 7, repository: 'other-org/other-repo', labels: ['vanguard'] } },
+        { id: 'PVTI_2', status: 'Todo', content: { type: 'Issue', number: 8, repository: 'Owner/Repo', labels: ['vanguard'] } },
+      ],
+    });
+    const ghCalls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'project' && args[1] === 'item-list') return itemList;
+      if (args[0] === 'project' && args[1] === 'view') return PROJECT_VIEW;
+      if (args[0] === 'project' && args[1] === 'field-list') return FIELD_LIST;
+      return '';
+    };
+    const primitives = githubProjectWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'test' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      projectNumber: 1,
+      label: 'vanguard',
+      triggerStatus: 'Todo',
+      claimedStatus: 'In Progress',
+      reviewStatus: 'In Review',
+      gh,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const ran: string[] = [];
+      await watchOnce({ ...primitives, runOne: async (id) => { ran.push(id); return { prUrl: 'pr/8' }; } }, { concurrency: 1 });
+      expect(ran).toEqual(['Owner/Repo#8']); // same repo, case-insensitive
+      expect(ghCalls.filter((a) => a[1] === 'item-edit' && a.includes('PVTI_1'))).toHaveLength(0); // foreign item never claimed
+      expect(warn.mock.calls.some(([msg]) => String(msg).includes('other-org/other-repo#7'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('onNoChange comments and reverts status to the trigger status', async () => {

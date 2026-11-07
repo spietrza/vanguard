@@ -136,10 +136,11 @@ export function scanOutgoingForSecrets(
 
 export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions): Promise<DeliverChangeResult> {
   // Gate before the commit: a push happens before any label can be attached, so the raw secret must
-  // never reach a commit in the first place. Always the worktree's own diff — never a caller's snapshot.
+  // never reach a commit in the first place. Always the worktree's own diff — never a caller's snapshot —
+  // rendered as text throughout, so an agent-written .gitattributes cannot hide a file from the scan.
   const secretEnvVars = opts.secretEnvVars ?? [];
   const block = scanOutgoingForSecrets(
-    await ctx.wm.diff(ctx.worktreePath),
+    await ctx.wm.outgoingDiff(ctx.worktreePath),
     opts.taskId,
     opts.target.kind === 'new-pr' ? 'publish' : 'revise push',
     secretEnvVars,
